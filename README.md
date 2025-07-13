@@ -5,7 +5,7 @@
 * Development mode :
   ```shell
   git clone git@github.com:Runeword/neovim.git && \
-  cd neovim && NVIM_CONFIG_DIR="$PWD/config" nix run .#dev.default --impure
+  cd neovim && NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure
   ```
 
 * Bundled mode :
