@@ -47,3 +47,8 @@
     inputs.runeword-neovim.packages.${pkgs.system}.default
   ];
   ```
+
+> Cachix :   
+> This repository contains 1 github actions workflow that automatically builds the neovim flake on Linux and MacOS environments.   
+> Build artifacts are uploaded to Cachix (a binary cache service) so subsequent builds can fetch pre-built binaries instead of rebuilding them from source.   
+> This makes neovim ready for use in bundled mode.
