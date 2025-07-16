@@ -1,4 +1,4 @@
-name: "Test"
+name: "Build and Cache"
 on:
   workflow_dispatch:
   pull_request:
