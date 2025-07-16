@@ -33,7 +33,7 @@ Install the `dev` package with home-manager :
 ## Bundled mode
 - In bundled mode, the Neovim configuration is copied into the Nix store.   
 This ensures that both the flake and its Neovim configuration are fully isolated from your local environment.   
-- However, any changes to the Neovim configuration require rebuilding the flake before they take effect.   
+However, any changes to the Neovim configuration require rebuilding the flake before they take effect.   
 - We use Cachix to provide ready-to-use Neovim binaries, so you can start using Neovim instantly without building it from source.
 
 ### Standalone run
