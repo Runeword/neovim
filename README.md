@@ -1,10 +1,10 @@
 # Neovim reproducible setup
-LSPs are installed through nixpkgs.   
-Neovim plugins are managed with lazy.nvim.   
-Neovim configuration use lua for mainstream development experience.
+- LSPs are installed through nixpkgs.   
+- Neovim plugins are managed with lazy.nvim.   
+- Neovim configuration use lua for mainstream development experience.
 
 ## Development mode
-When running in development mode, the Neovim configuration is symlinked to the Nix store.   
+- When running in development mode, the Neovim configuration is symlinked to the Nix store.   
 This approach streamlines development, allowing you to apply configuration changes immediately without having to rebuild the flake.
 
 ### Standalone run
@@ -31,10 +31,10 @@ Install the `dev` package with home-manager :
   ```
 
 ## Bundled mode
-In bundled mode, the Neovim configuration is copied into the Nix store.   
+- In bundled mode, the Neovim configuration is copied into the Nix store.   
 This ensures that both the flake and its Neovim configuration are fully isolated from your local environment.   
-However, any changes to the Neovim configuration require rebuilding the flake before they take effect.   
-We use Cachix to provide ready-to-use Neovim binaries, so you can start using Neovim instantly without building it from source.
+- However, any changes to the Neovim configuration require rebuilding the flake before they take effect.   
+- We use Cachix to provide ready-to-use Neovim binaries, so you can start using Neovim instantly without building it from source.
 
 ### Standalone run
 Run the `default` app :
