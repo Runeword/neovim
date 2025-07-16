@@ -7,14 +7,14 @@ Neovim configuration use lua for mainstream development experience.
 When running in development mode, the Neovim configuration is symlinked to the Nix store.   
 This approach streamlines development, allowing you to apply configuration changes immediately without having to rebuild the flake.
 
-* Standalone :
+### Run the `dev` app defined in the flake
 
   ```shell
   git clone git@github.com:Runeword/neovim.git && \
   cd neovim && NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure
   ```
 
-* Home-manager :
+### Install the `dev` package with home-manager
 
   `flake.nix`
   ```nix
@@ -34,7 +34,7 @@ This ensures that both the flake and its Neovim configuration are fully isolated
 However, any changes to the Neovim configuration require rebuilding the flake before they take effect.   
 We use Cachix to provide ready-to-use Neovim binaries, so you can start using Neovim instantly without building it from source.
 
-* Standalone :
+### Run the `default` app defined in the flake
 
   ```shell
   nix run "github:Runeword/neovim" \
@@ -42,7 +42,7 @@ We use Cachix to provide ready-to-use Neovim binaries, so you can start using Ne
   --option trusted-public-keys "runeword-neovim.cachix.org-1:Vvtv02wnOz9tp/qKztc9JJaBc9gXDpURCAvHiAlBKZ4="
   ```
 
-* Home-manager :
+### Install the `default` package with home-manager
 
   `flake.nix`
   ```nix
