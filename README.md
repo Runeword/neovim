@@ -1,4 +1,4 @@
-# Reproducible Neovim Setup
+# Neovim reproducible setup
 LSPs are installed through nixpkgs.   
 Neovim plugins are managed with lazy.nvim.   
 Neovim configuration use lua for mainstream development experience.
