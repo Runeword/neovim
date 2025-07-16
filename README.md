@@ -1,24 +1,17 @@
 ### Neovim
 
-#### Standalone run
+#### Development
+- When running in development mode, the Neovim configuration is symlinked to the Nix store.   
+- This approach streamlines development, allowing you to apply configuration changes immediately without having to rebuild the flake.
 
-* Development mode :
+* Standalone :
+
   ```shell
   git clone git@github.com:Runeword/neovim.git && \
   cd neovim && NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure
   ```
 
-* Bundled mode :
-
-  ```shell
-  nix run "github:Runeword/neovim" \
-  --option substituters "https://runeword-neovim.cachix.org" \
-  --option trusted-public-keys "runeword-neovim.cachix.org-1:Vvtv02wnOz9tp/qKztc9JJaBc9gXDpURCAvHiAlBKZ4="
-  ```
-
-#### Home Manager
-
-* Development mode :
+* Home-manager :
 
   `flake.nix`
   ```nix
@@ -32,7 +25,21 @@
   ];
   ```
 
-* Bundled mode :
+#### Bundled
+- In bundled mode, the Neovim configuration is copied into the Nix store.   
+- This ensures that both the flake and its Neovim configuration are fully isolated from your local environment.   
+- However, any changes to the Neovim configuration require rebuilding the flake before they take effect.   
+- Cachix provides ready-to-use Neovim binaries, so you can start using Neovim instantly without building it from source.
+
+* Standalone :
+
+  ```shell
+  nix run "github:Runeword/neovim" \
+  --option substituters "https://runeword-neovim.cachix.org" \
+  --option trusted-public-keys "runeword-neovim.cachix.org-1:Vvtv02wnOz9tp/qKztc9JJaBc9gXDpURCAvHiAlBKZ4="
+  ```
+
+* Home-manager :
 
   `flake.nix`
   ```nix
@@ -50,5 +57,5 @@
 
 > **Cachix**   
 > - This repository contains 1 github actions workflow that automatically builds the neovim flake on Linux and MacOS environments.   
+> - A new build is triggered whenever flake.nix or flake.lock changes.   
 > - Build artifacts are uploaded to Cachix (a binary cache service) so subsequent builds can fetch pre-built binaries instead of rebuilding them from source.   
-> - This makes neovim ready for use in bundled mode.
