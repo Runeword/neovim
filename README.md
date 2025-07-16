@@ -8,7 +8,7 @@ When running in development mode, the Neovim configuration is symlinked to the N
 This approach streamlines development, allowing you to apply configuration changes immediately without having to rebuild the flake.
 
 ### Standalone
-Run the `dev` app defined in the flake :
+Run the `dev` app :
 
   ```shell
   git clone git@github.com:Runeword/neovim.git && \
@@ -37,7 +37,7 @@ However, any changes to the Neovim configuration require rebuilding the flake be
 We use Cachix to provide ready-to-use Neovim binaries, so you can start using Neovim instantly without building it from source.
 
 ### Standalone
-Run the `default` app defined in the flake :
+Run the `default` app :
 
   ```shell
   nix run "github:Runeword/neovim" \
