@@ -15,7 +15,7 @@ vim.keymap.set('n',           'q',          require('functions').wipe_active_buf
 -- vim.keymap.set('n',           'q',          '<cmd>q<CR>',                                   { noremap = true, })
 
 vim.keymap.set('x',           '<C-n>',      ':Norm ')
-vim.keymap.set('n',           '<Leader>g',  '<cmd>silent !google-chrome-stable %:p<CR>')
+-- vim.keymap.set('n',           '<Leader>g',  '<cmd>silent !google-chrome-stable %:p<CR>')
 -- vim.keymap.set('n',           'g<Space>',   '<cmd>silent s/\\s\\+\\%#\\s*\\|\\s*\\%#\\s\\+/ /g<CR><cmd>nohlsearch<CR>')
 vim.keymap.set('n',           'g<Space>',   '<cmd>silent %s/\\s\\+$//e<CR>')
 -- vim.keymap.set({ 'x', 'n', }, '<Space>',    '<Enter>',                                                                  { remap = true, })
