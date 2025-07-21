@@ -27,27 +27,6 @@ return {
       callback = function()
         -- #0a172e #10141f #012749 #1a1a3b #1e2633 #262e3b #424a57 #7a7c9e #222b66
 
-        vim.api.nvim_set_hl(0, 'type', vim.tbl_extend('force',
-          vim.api.nvim_get_hl(0, { name = 'type', }),
-          { italic = true, bold = true, }))
-
-        vim.api.nvim_set_hl(0, 'Function', vim.tbl_extend('force',
-          vim.api.nvim_get_hl(0, { name = 'Function', }),
-          { italic = true, bold = true, }))
-
-        vim.api.nvim_set_hl(0, '@function', vim.tbl_extend('force',
-          vim.api.nvim_get_hl(0, { name = '@function', }),
-          { bold = true, italic = true, }))
-        vim.api.nvim_set_hl(0, '@function.builtin', vim.tbl_extend('force',
-          vim.api.nvim_get_hl(0, { name = '@function.builtin', }),
-          { bold = true, italic = true, }))
-        vim.api.nvim_set_hl(0, '@method', vim.tbl_extend('force',
-          vim.api.nvim_get_hl(0, { name = '@method', }),
-          { bold = true, italic = true, }))
-        vim.api.nvim_set_hl(0, '@method.call', vim.tbl_extend('force',
-          vim.api.nvim_get_hl(0, { name = '@method.call', }),
-          { bold = true, italic = true, }))
-
         vim.api.nvim_set_hl(0, 'TreesitterObjectHighlight', { bg = '#161d29', })
 
         vim.api.nvim_set_hl(0, 'string', vim.tbl_extend('force',
