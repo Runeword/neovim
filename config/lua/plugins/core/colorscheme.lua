@@ -29,6 +29,10 @@ return {
 
         vim.api.nvim_set_hl(0, 'TreesitterObjectHighlight', { bg = '#161d29', })
 
+        vim.api.nvim_set_hl(0, 'keyword', vim.tbl_extend('force',
+          vim.api.nvim_get_hl(0, { name = vim.api.nvim_get_hl(0, { name = 'keyword', }).link, }),
+          { italic = true, bold = true }))
+
         vim.api.nvim_set_hl(0, 'string', vim.tbl_extend('force',
           vim.api.nvim_get_hl(0, { name = vim.api.nvim_get_hl(0, { name = 'string', }).link, }),
           { italic = true, }))
