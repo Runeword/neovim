@@ -3,6 +3,7 @@ local vim = vim
 return {
   'mikavilpas/yazi.nvim',
   event = 'VeryLazy',
+  enabled = false,
   keys = {
     {
       '<leader>y',
