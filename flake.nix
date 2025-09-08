@@ -50,6 +50,7 @@
               bash-language-server
               eslint
               eslint_d
+              biome
               vue-language-server
               pyright
               vscode-langservers-extracted
