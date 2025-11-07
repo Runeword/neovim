@@ -59,6 +59,14 @@ return {
       },
 
       {
+        'selectioncount',
+        padding = { left = 0, right = 1, },
+        fmt = function(str)
+          return str:gsub('(%d+)', function(n) return string.format('%3d', tonumber(n)) end)
+        end,
+      },
+
+      {
         'filename',
         cond = conditions.buffer_not_empty,
         file_status = false,
@@ -168,6 +176,5 @@ return {
 
     -- Now don't forget to initialize lualine
     lualine.setup(config)
-
   end,
 }
