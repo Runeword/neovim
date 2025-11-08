@@ -116,6 +116,14 @@
         apps.dev.program = "${neovim-dev { }}/bin/nvim";
         packages.dev.default = neovim-dev { };
         packages.dev.options = neovim-dev;
+
+        devShells.default = pkgs.mkShell {
+          buildInputs = [
+            (pkgs.writeShellScriptBin "dev" ''
+              NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure "$@"
+              '')
+          ];
+        };
       }
     );
 }
