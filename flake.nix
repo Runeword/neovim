@@ -121,8 +121,11 @@
           buildInputs = [
             (pkgs.writeShellScriptBin "dev" ''
               NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure "$@"
-              '')
+            '')
           ];
+          shellHook = ''
+            echo "dev: run neovim in development mode"
+          '';
         };
       }
     );
