@@ -15,6 +15,7 @@ return {
     config = function()
       require('nvim-treesitter.configs').setup({
         ensure_installed = 'all',
+        ignore_install = { 'ipkg' },
         highlight = { enable = true, },
         indent = { enable = true, },
         autopairs = { enable = true, }, -- windwp/nvim-autopairs
