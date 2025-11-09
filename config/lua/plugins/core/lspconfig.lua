@@ -63,25 +63,23 @@ return {
       return vim.tbl_deep_extend('force', default_opts, override_opts or {})
     end
 
-    local lspconfig = require('lspconfig')
+    vim.lsp.config['lua_ls'].setup(set_config())
+    vim.lsp.config.yamlls.setup(set_config())
+    vim.lsp.config.ccls.setup(set_config())
+    vim.lsp.config.eslint.setup(set_config())
+    vim.lsp.config.jsonls.setup(set_config())
+    vim.lsp.config.gopls.setup(set_config())
+    vim.lsp.config['rust_analyzer'].setup(set_config())
+    vim.lsp.config.marksman.setup(set_config())
+    vim.lsp.config.terraformls.setup(set_config())
+    vim.lsp.config.taplo.setup(set_config())
+    vim.lsp.config.bashls.setup(set_config({ filetypes = { 'sh', 'zsh', }, }))
+    vim.lsp.config.cssls.setup(set_config())
+    vim.lsp.config.volar.setup(set_config({ on_attach = on_attach_server(false), }))
+    vim.lsp.config.pyright.setup(set_config())
+    -- vim.lsp.config.harper_ls.setup(set_config({ filetypes = { 'markdown', }, }))
 
-    lspconfig['lua_ls'].setup(set_config())
-    lspconfig.yamlls.setup(set_config())
-    lspconfig.ccls.setup(set_config())
-    lspconfig.eslint.setup(set_config())
-    lspconfig.jsonls.setup(set_config())
-    lspconfig.gopls.setup(set_config())
-    lspconfig['rust_analyzer'].setup(set_config())
-    lspconfig.marksman.setup(set_config())
-    lspconfig.terraformls.setup(set_config())
-    lspconfig.taplo.setup(set_config())
-    lspconfig.bashls.setup(set_config({ filetypes = { 'sh', 'zsh', }, }))
-    lspconfig.cssls.setup(set_config())
-    lspconfig.volar.setup(set_config({ on_attach = on_attach_server(false), }))
-    lspconfig.pyright.setup(set_config())
-    -- lspconfig.harper_ls.setup(set_config({ filetypes = { 'markdown', }, }))
-
-    lspconfig['ts_ls'].setup(set_config(
+    vim.lsp.config['ts_ls'].setup(set_config(
       {
         on_attach = on_attach_server(false),
         autostart = true,
@@ -89,7 +87,7 @@ return {
       }
     ))
 
-    lspconfig['nil_ls'].setup(set_config(
+    vim.lsp.config['nil_ls'].setup(set_config(
       {
         settings = {
           ['nil'] = {
