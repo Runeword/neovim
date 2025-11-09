@@ -63,31 +63,47 @@ return {
       return vim.tbl_deep_extend('force', default_opts, override_opts or {})
     end
 
-    vim.lsp.config['lua_ls'].setup(set_config())
-    vim.lsp.config.yamlls.setup(set_config())
-    vim.lsp.config.ccls.setup(set_config())
-    vim.lsp.config.eslint.setup(set_config())
-    vim.lsp.config.jsonls.setup(set_config())
-    vim.lsp.config.gopls.setup(set_config())
-    vim.lsp.config['rust_analyzer'].setup(set_config())
-    vim.lsp.config.marksman.setup(set_config())
-    vim.lsp.config.terraformls.setup(set_config())
-    vim.lsp.config.taplo.setup(set_config())
-    vim.lsp.config.bashls.setup(set_config({ filetypes = { 'sh', 'zsh', }, }))
-    vim.lsp.config.cssls.setup(set_config())
-    vim.lsp.config.volar.setup(set_config({ on_attach = on_attach_server(false), }))
-    vim.lsp.config.pyright.setup(set_config())
-    -- vim.lsp.config.harper_ls.setup(set_config({ filetypes = { 'markdown', }, }))
+    vim.lsp.config('lua_ls', set_config())
+    vim.lsp.enable('lua_ls')
+    vim.lsp.config('yamlls', set_config())
+    vim.lsp.enable('yamlls')
+    vim.lsp.config('ccls', set_config())
+    vim.lsp.enable('ccls')
+    vim.lsp.config('eslint', set_config())
+    vim.lsp.enable('eslint')
+    vim.lsp.config('jsonls', set_config())
+    vim.lsp.enable('jsonls')
+    vim.lsp.config('gopls', set_config())
+    vim.lsp.enable('gopls')
+    vim.lsp.config('rust_analyzer', set_config())
+    vim.lsp.enable('rust_analyzer')
+    vim.lsp.config('marksman', set_config())
+    vim.lsp.enable('marksman')
+    vim.lsp.config('terraformls', set_config())
+    vim.lsp.enable('terraformls')
+    vim.lsp.config('taplo', set_config())
+    vim.lsp.enable('taplo')
+    vim.lsp.config('bashls', set_config({ filetypes = { 'sh', 'zsh', }, }))
+    vim.lsp.enable('bashls')
+    vim.lsp.config('cssls', set_config())
+    vim.lsp.enable('cssls')
+    vim.lsp.config('volar', set_config({ on_attach = on_attach_server(false), }))
+    vim.lsp.enable('volar')
+    vim.lsp.config('pyright', set_config())
+    vim.lsp.enable('pyright')
+    -- vim.lsp.config('harper_ls', set_config({ filetypes = { 'markdown', }, }))
+    -- vim.lsp.enable('harper_ls')
 
-    vim.lsp.config['ts_ls'].setup(set_config(
+    vim.lsp.config('ts_ls', set_config(
       {
         on_attach = on_attach_server(false),
         autostart = true,
         ['settings.format.enable'] = false,
       }
     ))
+    vim.lsp.enable('ts_ls')
 
-    vim.lsp.config['nil_ls'].setup(set_config(
+    vim.lsp.config('nil_ls', set_config(
       {
         settings = {
           ['nil'] = {
@@ -99,6 +115,7 @@ return {
         },
       }
     ))
+    vim.lsp.enable('nil_ls')
 
     -------------------- https://github.com/neovim/nvim-lspconfig/wiki/UI-customization
     vim.diagnostic.config(
