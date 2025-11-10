@@ -53,6 +53,16 @@ return {
 
     local cmp_exists, cmp_nvim_lsp = pcall(require, 'cmp_nvim_lsp')
 
+    local function safe_root_dir(markers)
+      return function(fname)
+        local root = vim.fs.root(fname, markers)
+        if type(root) == 'table' then
+          return root[1]
+        end
+        return root
+      end
+    end
+
     local function set_config(override_opts)
       local default_opts = {
         capabilities = cmp_exists and cmp_nvim_lsp.default_capabilities() or {}, -- hrsh7th/nvim-cmp
@@ -69,7 +79,9 @@ return {
     vim.lsp.enable('yamlls')
     vim.lsp.config('ccls', set_config())
     vim.lsp.enable('ccls')
-    vim.lsp.config('eslint', set_config())
+    vim.lsp.config('eslint', set_config({
+      root_dir = safe_root_dir({ 'package.json', '.eslintrc', '.eslintrc.js', '.eslintrc.json', '.eslintrc.yaml', '.eslintrc.yml' }),
+    }))
     vim.lsp.enable('eslint')
     vim.lsp.config('jsonls', set_config())
     vim.lsp.enable('jsonls')
@@ -99,6 +111,7 @@ return {
         on_attach = on_attach_server(false),
         autostart = true,
         ['settings.format.enable'] = false,
+        root_dir = safe_root_dir({ 'package.json', 'tsconfig.json', 'jsconfig.json' }),
       }
     ))
     vim.lsp.enable('ts_ls')
