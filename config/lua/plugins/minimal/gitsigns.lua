@@ -28,6 +28,12 @@ return {
         vim.keymap.set({ 'n', 'x', }, '<leader>gd',
           package.loaded.gitsigns.toggle_deleted,
           { buffer = buffer, })
+        vim.keymap.set({ 'n', 'x', }, '<C-g>',
+          package.loaded.gitsigns.next_hunk,
+          { buffer = buffer, desc = 'next hunk', })
+        vim.keymap.set({ 'n', 'x', }, '<C-S-g>',
+          package.loaded.gitsigns.prev_hunk,
+          { buffer = buffer, desc = 'prev hunk', })
       end,
 
       signs = {
