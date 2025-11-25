@@ -124,8 +124,9 @@
             '')
             (pkgs.writeShellScriptBin "bdl" ''
               nix run "github:Runeword/neovim" \
-              --option substituters "https://runeword-neovim.cachix.org" \
-              --option trusted-public-keys "runeword-neovim.cachix.org-1:Vvtv02wnOz9tp/qKztc9JJaBc9gXDpURCAvHiAlBKZ4="
+              --option extra-substituters "https://runeword-neovim.cachix.org" \
+              --option extra-trusted-public-keys "runeword-neovim.cachix.org-1:Vvtv02wnOz9tp/qKztc9JJaBc9gXDpURCAvHiAlBKZ4=" \
+              "$@"
             '')
           ];
           shellHook = ''
