@@ -122,6 +122,11 @@
             (pkgs.writeShellScriptBin "dev" ''
               NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure "$@"
             '')
+            (pkgs.writeShellScriptBin "h" ''
+              echo "type 'dev' to run neovim in development mode"
+              echo "type 'bdl' to run neovim in bundled mode"
+              echo "type 'h' for help"
+            '')
             (pkgs.writeShellScriptBin "bdl" ''
               nix run "github:Runeword/neovim" \
               --option extra-substituters "https://runeword-neovim.cachix.org" \
@@ -130,8 +135,7 @@
             '')
           ];
           shellHook = ''
-            echo "type 'dev' to run neovim in development mode"
-            echo "type 'bdl' to run neovim in bundled mode"
+            h
           '';
         };
       }
