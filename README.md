@@ -12,7 +12,7 @@ Run the `dev` app :
 
   ```shell
   git clone git@github.com:Runeword/neovim.git && \
-  cd neovim && NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure
+  cd neovim && nix develop && dev
   ```
 
 ### Home-manager install
@@ -26,7 +26,7 @@ Install the `dev` package with home-manager :
   `home.nix`
   ```nix
   home.packages = [
-    (inputs.runeword-neovim.packages.${pkgs.system}.dev.options { configPath = "${config.home.homeDirectory}/neovim/config"; })
+    (inputs.runeword-neovim.packages.${pkgs.stdenv.hostPlatform.system}.dev.options { configPath = "${config.home.homeDirectory}/neovim/config"; })
   ];
   ```
 
