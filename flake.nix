@@ -128,10 +128,7 @@
               echo "type 'h' for help"
             '')
             (pkgs.writeShellScriptBin "bdl" ''
-              nix run "github:Runeword/neovim" \
-              --option extra-substituters "https://runeword-neovim.cachix.org" \
-              --option extra-trusted-public-keys "runeword-neovim.cachix.org-1:Vvtv02wnOz9tp/qKztc9JJaBc9gXDpURCAvHiAlBKZ4=" \
-              "$@"
+              nix run . "$@"
             '')
           ];
           shellHook = ''
@@ -141,17 +138,3 @@
       }
     );
 }
-
-# {
-#   description = "My own Neovim flake";
-#   # # inputs.neovim.url = "github:neovim/neovim/v0.8.3?dir=contrib";
-#   inputs.neovim.url = "github:neovim/neovim/nightly?dir=contrib";
-#   inputs.neovim.inputs.nixpkgs.follows = "nixpkgs";
-#   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-# outputs = { self, nixpkgs, neovim }: {
-#   packages.x86_64-linux.default = neovim.packages.x86_64-linux.neovim;
-#   apps.x86_64-linux.default = {
-#     type = "app";
-#     program = "${neovim.packages.x86_64-linux.neovim}/bin/nvim";
-#   };
-# };
