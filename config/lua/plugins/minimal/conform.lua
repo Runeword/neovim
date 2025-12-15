@@ -20,7 +20,7 @@ return {
 
       formatters = {
         shfmt = {
-          prepend_args = { '-i', '2', '-ci', },
+          prepend_args = { '--indent', '2', '--case-indent', '--language-dialect', 'posix', '--simplify', },
         },
       },
     })
