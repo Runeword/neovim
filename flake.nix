@@ -72,6 +72,7 @@
               taplo
               black
               isort
+              stylua
               harper
               # typos-lsp
             ]
@@ -119,6 +120,8 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = [
+            pkgs.stylua
+            pkgs.nixfmt-rfc-style
             (pkgs.writeShellScriptBin "dev" ''
               NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure "$@"
             '')
