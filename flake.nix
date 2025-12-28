@@ -74,6 +74,7 @@
               isort
               stylua
               harper
+              jsonnet-language-server
               # typos-lsp
             ]
           } \
