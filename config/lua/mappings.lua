@@ -2,26 +2,26 @@ local vim = vim
 
 ----------------------------------- UNMAP
 
-vim.keymap.set('n',           '<Enter>',    '<Nop>')
-vim.keymap.set('n',           '<Space>',    '<Nop>')
-vim.keymap.set('n',           '<C-n>',      '<Nop>')
-vim.keymap.set('n',           '<C-p>',      '<Nop>')
-vim.keymap.set('',            'Q',          '<Nop>')
-vim.keymap.set('',            'q',          '<Nop>')
+vim.keymap.set('n', '<Enter>', '<Nop>')
+vim.keymap.set('n', '<Space>', '<Nop>')
+vim.keymap.set('n', '<C-n>', '<Nop>')
+vim.keymap.set('n', '<C-p>', '<Nop>')
+vim.keymap.set('', 'Q', '<Nop>')
+vim.keymap.set('', 'q', '<Nop>')
 
-vim.keymap.set('n',           '<Leader>hd', '<cmd>checkhealth vim.deprecated<CR>')
+vim.keymap.set('n', '<Leader>hd', '<cmd>checkhealth vim.deprecated<CR>')
 
-vim.keymap.set('n',           'q',          require('functions').wipe_active_buffers,                                   { noremap = true, })
+vim.keymap.set('n', 'q', require('functions').wipe_active_buffers, { noremap = true })
 -- vim.keymap.set('n',           'q',          '<cmd>q<CR>',                                   { noremap = true, })
 
-vim.keymap.set('x',           '<C-n>',      ':Norm ')
+vim.keymap.set('x', '<C-n>', ':Norm ')
 -- vim.keymap.set('n',           '<Leader>g',  '<cmd>silent !google-chrome-stable %:p<CR>')
 -- vim.keymap.set('n',           'g<Space>',   '<cmd>silent s/\\s\\+\\%#\\s*\\|\\s*\\%#\\s\\+/ /g<CR><cmd>nohlsearch<CR>')
-vim.keymap.set('x',           'g<Space>',   ':s/\\s\\+$//<CR>')
+vim.keymap.set('x', 'g<Space>', ':s/\\s\\+$//<CR>')
 -- vim.keymap.set({ 'x', 'n', }, '<Space>',    '<Enter>',                                                                  { remap = true, })
-vim.keymap.set({ 'x', 'n', }, '<Enter>',    '<Space>',                                                                  { remap = true, })
-vim.keymap.set({ 'x', 'n', }, '<Leader>q',  '<cmd>qa!<CR>')
-vim.keymap.set({ 'x', 'n', }, 'Q',          '<cmd>qa!<CR>')
+vim.keymap.set({ 'x', 'n' }, '<Enter>', '<Space>', { remap = true })
+vim.keymap.set({ 'x', 'n' }, '<Leader>q', '<cmd>qa!<CR>')
+vim.keymap.set({ 'x', 'n' }, 'Q', '<cmd>qa!<CR>')
 
 local function is_quickfix_open()
   for _, win in ipairs(vim.fn.getwininfo()) do
@@ -53,66 +53,66 @@ end, { desc = 'Navigate to previous quickfix item' })
 -- vim.keymap.set( 'n', '<S-PageDown>',          '<cmd>cfirst<CR>')
 -- vim.keymap.set( 'n', '<S-PageUp>',          '<cmd>clast<CR>')
 
-vim.keymap.set('n',           '<Leader>m', require('functions').displayMessages, { noremap = true, silent = true, })
+vim.keymap.set('n', '<Leader>m', require('functions').displayMessages, { noremap = true, silent = true })
 
-vim.keymap.set('n',           'R',         require('functions').redoAllChanges,  { desc = 'Redo all changes', })
-vim.keymap.set('n',           '<Leader>s', require('functions').deleteUndoTree,  { desc = 'Delete undo tree', })
+vim.keymap.set('n', 'R', require('functions').redoAllChanges, { desc = 'Redo all changes' })
+vim.keymap.set('n', '<Leader>s', require('functions').deleteUndoTree, { desc = 'Delete undo tree' })
 
-vim.keymap.set('n',           'g<Enter>',  require('functions').toggleFold,      { desc = 'Toggle fold', })
+vim.keymap.set('n', 'g<Enter>', require('functions').toggleFold, { desc = 'Toggle fold' })
 
-vim.keymap.set('t',           '<Esc>',     [[<C-\><C-n>]])
-vim.keymap.set('n',           '<Esc>',     require('functions').cancel)
+vim.keymap.set('t', '<Esc>', [[<C-\><C-n>]])
+vim.keymap.set('n', '<Esc>', require('functions').cancel)
 
-vim.keymap.set({ 'n', 'x', }, '<C-Down>',  '<C-w>j',                             { desc = 'Focus bottom window', })
-vim.keymap.set({ 'n', 'x', }, '<C-Up>',    '<C-w>k',                             { desc = 'Focus top window', })
-vim.keymap.set({ 'n', 'x', }, '<C-Left>',  '<C-w>h',                             { desc = 'Focus left window', })
-vim.keymap.set({ 'n', 'x', }, '<C-Right>', '<C-w>l',                             { desc = 'Focus right window', })
+vim.keymap.set({ 'n', 'x' }, '<C-Down>', '<C-w>j', { desc = 'Focus bottom window' })
+vim.keymap.set({ 'n', 'x' }, '<C-Up>', '<C-w>k', { desc = 'Focus top window' })
+vim.keymap.set({ 'n', 'x' }, '<C-Left>', '<C-w>h', { desc = 'Focus left window' })
+vim.keymap.set({ 'n', 'x' }, '<C-Right>', '<C-w>l', { desc = 'Focus right window' })
 
 -- vim.keymap.set('n',           '<C-S-Down>',  ':resize +3<CR>',                     { desc = 'Resize window down', })
 -- vim.keymap.set('n',           '<C-Up>',    ':resize -3<CR>',                     { desc = 'Resize window up', })
-vim.keymap.set('n', '<C-S-Left>',  ':vertical resize +3<CR>', { desc = 'Resize window left', })
-vim.keymap.set('n', '<C-S-Right>', ':vertical resize -3<CR>', { desc = 'Resize window right', })
+vim.keymap.set('n', '<C-S-Left>', ':vertical resize +3<CR>', { desc = 'Resize window left' })
+vim.keymap.set('n', '<C-S-Right>', ':vertical resize -3<CR>', { desc = 'Resize window right' })
 
 ----------------------------------- EDIT
 
 vim.keymap.set('i', '<C-BS>', '<C-w>')
-vim.keymap.set('n', '<BS>',   '`[v`]')
-vim.keymap.set('n', 'i',      require('functions').insert, { expr = true, })
+vim.keymap.set('n', '<BS>', '`[v`]')
+vim.keymap.set('n', 'i', require('functions').insert, { expr = true })
 vim.keymap.set('i', '<C-Space>', '<C-V>u00A0')
 
 ----------------------------------- TEXT OBJECTS
-vim.keymap.set({ 'o', 'x', }, 'a<Space>', 'aW')
-vim.keymap.set({ 'o', 'x', }, 'i<Space>', 'iW')
-vim.keymap.set({ 'o', },      '<Space>',  'iW')
-vim.keymap.set({ 'o', 'x', }, 'a<CR>',    'ap')
-vim.keymap.set({ 'o', 'x', }, 'i<CR>',    'ip')
-vim.keymap.set({ 'o', },      '<CR>',     'ip')
-vim.keymap.set({ 'o', 'x', }, 'a<Tab>',   'ap')
-vim.keymap.set({ 'o', 'x', }, 'i<Tab>',   'ip')
-vim.keymap.set({ 'o', },      '<Tab>',    'ip')
+vim.keymap.set({ 'o', 'x' }, 'a<Space>', 'aW')
+vim.keymap.set({ 'o', 'x' }, 'i<Space>', 'iW')
+vim.keymap.set({ 'o' }, '<Space>', 'iW')
+vim.keymap.set({ 'o', 'x' }, 'a<CR>', 'ap')
+vim.keymap.set({ 'o', 'x' }, 'i<CR>', 'ip')
+vim.keymap.set({ 'o' }, '<CR>', 'ip')
+vim.keymap.set({ 'o', 'x' }, 'a<Tab>', 'ap')
+vim.keymap.set({ 'o', 'x' }, 'i<Tab>', 'ip')
+vim.keymap.set({ 'o' }, '<Tab>', 'ip')
 
-vim.keymap.set({ 'o', 'x', }, 'q',        'iq', { remap = true, })
-vim.keymap.set({ 'o', },      '(',        'i(')
-vim.keymap.set({ 'o', },      ')',        'i)')
-vim.keymap.set({ 'o', },      '[',        'i[')
-vim.keymap.set({ 'o', },      ']',        'i]')
-vim.keymap.set({ 'o', },      '{',        'i{')
-vim.keymap.set({ 'o', },      '}',        'i}')
-vim.keymap.set({ 'o', },      '<',        'i<')
-vim.keymap.set({ 'o', },      '>',        'i>')
+vim.keymap.set({ 'o', 'x' }, 'q', 'iq', { remap = true })
+vim.keymap.set({ 'o' }, '(', 'i(')
+vim.keymap.set({ 'o' }, ')', 'i)')
+vim.keymap.set({ 'o' }, '[', 'i[')
+vim.keymap.set({ 'o' }, ']', 'i]')
+vim.keymap.set({ 'o' }, '{', 'i{')
+vim.keymap.set({ 'o' }, '}', 'i}')
+vim.keymap.set({ 'o' }, '<', 'i<')
+vim.keymap.set({ 'o' }, '>', 'i>')
 
 ----------------------------------- OPERATORS
 
 -- vim.keymap.set('x', 'p', '"_dP')
-vim.keymap.set({ 'n', 'v', }, 'd',  '"_d')
-vim.keymap.set('n',           'D',  '"_D')
-vim.keymap.set('n',           'dd', '"_dd^')
-vim.keymap.set({ 'n', 'v', }, 'x',  '"_x')
-vim.keymap.set({ 'n', 'v', }, 'm',  'd')
-vim.keymap.set('n',           'M',  'D')
-vim.keymap.set('n',           'mm', 'dd^')
-vim.keymap.set('x',           'v',  'V')
-vim.keymap.set('n',           'V',  require('functions').visualSelectToEndOfline)
+vim.keymap.set({ 'n', 'v' }, 'd', '"_d')
+vim.keymap.set('n', 'D', '"_D')
+vim.keymap.set('n', 'dd', '"_dd^')
+vim.keymap.set({ 'n', 'v' }, 'x', '"_x')
+vim.keymap.set({ 'n', 'v' }, 'm', 'd')
+vim.keymap.set('n', 'M', 'D')
+vim.keymap.set('n', 'mm', 'dd^')
+vim.keymap.set('x', 'v', 'V')
+vim.keymap.set('n', 'V', require('functions').visualSelectToEndOfline)
 
 ----------------------------------- READLINE
 
@@ -124,14 +124,17 @@ vim.keymap.set('i', '<C-u>', '<C-o>S')
 
 --------------------------------- MOTIONS
 
-vim.keymap.set({ 'x', 'n', }, 'k', 'gk')
-vim.keymap.set({ 'x', 'n', }, 'j', 'gj')
-vim.keymap.set({ 'x', 'n', }, 'K', function() require('functions').move_to_non_empty_line(-4) end,
-  { noremap = true, })
-vim.keymap.set({ 'x', 'n', }, 'J',     function() require('functions').move_to_non_empty_line(4) end, { noremap = true, })
+vim.keymap.set({ 'x', 'n' }, 'k', 'gk')
+vim.keymap.set({ 'x', 'n' }, 'j', 'gj')
+vim.keymap.set({ 'x', 'n' }, 'K', function()
+  require('functions').move_to_non_empty_line(-4)
+end, { noremap = true })
+vim.keymap.set({ 'x', 'n' }, 'J', function()
+  require('functions').move_to_non_empty_line(4)
+end, { noremap = true })
 
-vim.keymap.set({ 'x', 'n', }, '<C-j>', 'J')
-vim.keymap.set('n',           '0',     'g0')
+vim.keymap.set({ 'x', 'n' }, '<C-j>', 'J')
+vim.keymap.set('n', '0', 'g0')
 
 -- vim.keymap.set('n', '$', function()
 --   vim.fn.execute('normal! g$')
@@ -140,18 +143,109 @@ vim.keymap.set('n',           '0',     'g0')
 -- end)
 
 -- vim.keymap.set('n',           '^',  'g^')
-vim.keymap.set('n',           '&',  'g^')
+vim.keymap.set('n', '&', 'g^')
 
-vim.keymap.set({ 'n', 'x', }, ',',  function() vim.fn.search('[,.:;]') end)
-vim.keymap.set({ 'n', 'x', }, '<',  function() vim.fn.search('[,.:;]', 'b') end)
-vim.keymap.set({ 'n', },      '\'', function() vim.fn.search('[\'"`]') end)
-vim.keymap.set({ 'n', },      '"',  function() vim.fn.search('[\'"`]', 'b') end)
-vim.keymap.set({ 'n', 'x', }, ')',  function() vim.fn.search(')') end)
-vim.keymap.set({ 'n', 'x', }, '(',  function() vim.fn.search('(') end)
+vim.keymap.set({ 'n', 'x' }, ',', function()
+  vim.fn.search('[,.:;]')
+end)
+vim.keymap.set({ 'n', 'x' }, '<', function()
+  vim.fn.search('[,.:;]', 'b')
+end)
+vim.keymap.set({ 'n' }, "'", function()
+  vim.fn.search('[\'"`]')
+end)
+vim.keymap.set({ 'n' }, '"', function()
+  vim.fn.search('[\'"`]', 'b')
+end)
+vim.keymap.set({ 'n', 'x' }, ')', function()
+  vim.fn.search(')')
+end)
+vim.keymap.set({ 'n', 'x' }, '(', function()
+  vim.fn.search('(')
+end)
 
 ---------------------------------- folke/lazy.nvim
 
 vim.keymap.set('n', '<leader>l', '<cmd>Lazy<CR>')
+
+---------------------------------- Open in VSCode
+
+vim.keymap.set('n', '<leader>v', function()
+  local filepath = vim.fn.expand('%:p')
+  if filepath == '' then
+    vim.notify('No file to open in VSCode', vim.log.levels.WARN)
+    return
+  end
+
+  local line = vim.fn.line('.')
+  local target = string.format('%s:%d', filepath, line)
+  local code_path = vim.fn.exepath('code')
+
+  if code_path == '' then
+    vim.notify('VSCode not found in PATH', vim.log.levels.ERROR)
+    return
+  end
+
+  vim.fn.jobstart(
+    {
+      'env',
+      '-i',
+      'DISPLAY=' .. vim.env.DISPLAY,
+      'HOME=' .. vim.env.HOME,
+      'PATH=' .. vim.env.PATH,
+      'setsid',
+      '-f',
+      code_path,
+      '--goto',
+      target,
+    },
+    { detach = true }
+  )
+
+  vim.notify('Opened in VSCode: ' .. vim.fn.fnamemodify(filepath, ':t') .. ':' .. line, vim.log.levels.INFO)
+end, { desc = 'Open current buffer in VSCode at current line' })
+
+vim.keymap.set('n', '<leader>V', function()
+  local buffers = vim.fn.getbufinfo({ buflisted = 1 })
+  local files = {}
+
+  for _, buf in ipairs(buffers) do
+    if buf.name ~= '' and vim.fn.filereadable(buf.name) == 1 then
+      table.insert(files, buf.name)
+    end
+  end
+
+  if #files == 0 then
+    vim.notify('No file buffers to open in VSCode', vim.log.levels.WARN)
+    return
+  end
+
+  local code_path = vim.fn.exepath('code')
+
+  if code_path == '' then
+    vim.notify('VSCode not found in PATH', vim.log.levels.ERROR)
+    return
+  end
+
+  local cmd = {
+    'env',
+    '-i',
+    'DISPLAY=' .. vim.env.DISPLAY,
+    'HOME=' .. vim.env.HOME,
+    'PATH=' .. vim.env.PATH,
+    'setsid',
+    '-f',
+    code_path,
+  }
+
+  for _, file in ipairs(files) do
+    table.insert(cmd, file)
+  end
+
+  vim.fn.jobstart(cmd, { detach = true })
+
+  vim.notify('Opened ' .. #files .. ' buffer(s) in VSCode', vim.log.levels.INFO)
+end, { desc = 'Open all buffers in VSCode' })
 
 -- vim.keymap.set({ 'x', 'o' }, '<Plug>(arpeggio-default:()', 'i(', { remap = true, })
 -- vim.keymap.set({ 'x', 'o' }, '<Plug>(arpeggio-default:))', 'a)', { remap = true, })
