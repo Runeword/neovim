@@ -19,46 +19,43 @@ end
 
 vim.opt.runtimepath:prepend(lazypath)
 
-require('lazy').setup(
-  {
-    { import = 'plugins', },
-    { import = 'plugins.core', },
-    { import = 'plugins.minimal', },
-    { import = 'plugins.completion', },
-    { import = 'plugins.textobjects', },
-    { import = 'plugins.search', },
-    { import = 'plugins.format', },
-    { import = 'plugins.debug', },
-    { import = 'plugins.move', },
-    { import = 'plugins.ui', },
-  },
+require('lazy').setup({
+  { import = 'plugins' },
+  { import = 'plugins.core' },
+  { import = 'plugins.minimal' },
+  { import = 'plugins.completion' },
+  { import = 'plugins.textobjects' },
+  { import = 'plugins.search' },
+  { import = 'plugins.format' },
+  { import = 'plugins.debug' },
+  { import = 'plugins.move' },
+  { import = 'plugins.ui' },
+  { 'echasnovski/mini.indentscope', enabled = false },
+}, {
+  defaults = { lazy = false },
+  -- install = { colorscheme = { 'tokyonight', 'habamax' } },
+  -- checker = { enabled = true },
 
-  {
-    defaults = { lazy = false, },
-    -- install = { colorscheme = { 'tokyonight', 'habamax' } },
-    -- checker = { enabled = true },
-
-    performance = {
-      rtp = {
-        disabled_plugins = {
-          'gzip',
-          'matchit',
-          'matchparen',
-          'netrwPlugin',
-          'tarPlugin',
-          'tohtml',
-          'tutor',
-          'zipPlugin',
-        },
+  performance = {
+    rtp = {
+      disabled_plugins = {
+        'gzip',
+        'matchit',
+        'matchparen',
+        'netrwPlugin',
+        'tarPlugin',
+        'tohtml',
+        'tutor',
+        'zipPlugin',
       },
     },
+  },
 
-    change_detection = {
-      enabled = true,
-      notify = false,
-    },
-  }
-)
+  change_detection = {
+    enabled = true,
+    notify = false,
+  },
+})
 
 local viewConfig = require('lazy.view.config')
 
