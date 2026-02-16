@@ -55,9 +55,6 @@ end, { desc = 'Navigate to previous quickfix item' })
 
 vim.keymap.set('n', '<Leader>m', require('functions').displayMessages, { noremap = true, silent = true })
 
-vim.keymap.set('n', 'R', require('functions').redoAllChanges, { desc = 'Redo all changes' })
-vim.keymap.set('n', '<Leader>s', require('functions').deleteUndoTree, { desc = 'Delete undo tree' })
-
 vim.keymap.set('n', 'g<Enter>', require('functions').toggleFold, { desc = 'Toggle fold' })
 
 vim.keymap.set('t', '<Esc>', [[<C-\><C-n>]])
@@ -186,21 +183,18 @@ vim.keymap.set('n', '<leader>v', function()
     return
   end
 
-  vim.fn.jobstart(
-    {
-      'env',
-      '-i',
-      'DISPLAY=' .. vim.env.DISPLAY,
-      'HOME=' .. vim.env.HOME,
-      'PATH=' .. vim.env.PATH,
-      'setsid',
-      '-f',
-      code_path,
-      '--goto',
-      target,
-    },
-    { detach = true }
-  )
+  vim.fn.jobstart({
+    'env',
+    '-i',
+    'DISPLAY=' .. vim.env.DISPLAY,
+    'HOME=' .. vim.env.HOME,
+    'PATH=' .. vim.env.PATH,
+    'setsid',
+    '-f',
+    code_path,
+    '--goto',
+    target,
+  }, { detach = true })
 
   vim.notify('Opened in VSCode: ' .. vim.fn.fnamemodify(filepath, ':t') .. ':' .. line, vim.log.levels.INFO)
 end, { desc = 'Open current buffer in VSCode at current line' })
