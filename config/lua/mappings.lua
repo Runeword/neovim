@@ -123,14 +123,13 @@ vim.keymap.set('i', '<C-u>', '<C-o>S')
 
 vim.keymap.set({ 'x', 'n' }, 'k', 'gk')
 vim.keymap.set({ 'x', 'n' }, 'j', 'gj')
-vim.keymap.set({ 'x', 'n' }, 'K', function()
+
+vim.keymap.set({ 'x', 'n' }, '<C-k>', function()
   require('functions').move_to_non_empty_line(-4)
 end, { noremap = true })
-vim.keymap.set({ 'x', 'n' }, 'J', function()
+vim.keymap.set({ 'x', 'n' }, '<C-j>', function()
   require('functions').move_to_non_empty_line(4)
 end, { noremap = true })
-
-vim.keymap.set({ 'x', 'n' }, '<C-j>', 'J')
 vim.keymap.set('n', '0', 'g0')
 
 -- vim.keymap.set('n', '$', function()
