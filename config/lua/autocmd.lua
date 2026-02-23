@@ -126,6 +126,23 @@ vim.api.nvim_create_autocmd('LspAttach', {
 	desc = 'Remove LSP default global keymaps',
 })
 
+local searchcount_ns = vim.api.nvim_create_namespace('searchcount')
+vim.api.nvim_create_augroup('searchcount', { clear = true })
+vim.api.nvim_create_autocmd('CursorMoved', {
+	group = 'searchcount',
+	callback = function()
+		vim.api.nvim_buf_clear_namespace(0, searchcount_ns, 0, -1)
+		if vim.v.hlsearch == 0 then return end
+		local ok, result = pcall(vim.fn.searchcount)
+		if not ok or result.total == 0 then return end
+		local line = vim.api.nvim_get_current_line()
+		vim.api.nvim_buf_set_extmark(0, searchcount_ns, vim.api.nvim_win_get_cursor(0)[1] - 1, #line, {
+			virt_text = { { (' %d/%d'):format(result.current, result.total), 'CurSearch' } },
+			virt_text_pos = 'inline',
+		})
+	end,
+})
+
 -- Close floating windows safely on BufLeave to prevent E5555 errors
 vim.api.nvim_create_augroup('float_cleanup', { clear = true })
 vim.api.nvim_create_autocmd('BufLeave', {
