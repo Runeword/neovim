@@ -94,7 +94,7 @@ return {
 
     vim.keymap.set({ 'n', 'x', }, '<Leader>d', function() mappings:activate() end)
 
-    require('dap').set_log_level('TRACE');
+    require('dap').set_log_level('WARN');
 
     -- require('dap').adapters.bashdb = {
     --   type = 'executable',
