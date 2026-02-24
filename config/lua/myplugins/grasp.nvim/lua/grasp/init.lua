@@ -1,79 +1,15 @@
--- -- Create a namespace for our extmarks
--- local ns_id = api.nvim_create_namespace("node_type_labels")
-
--- -- Fallback mapping in case the textobjects module is not available
--- local fallback_map = {
---   ["function"] = "f",
---   ["class"] = "c",
---   ["loop"] = "l",
---   ["conditional"] = "i",
---   ["call"] = "m",
---   ["parameter"] = "a",
---   ["statement"] = "s",
---   ["comment"] = "/",
---   -- Add more mappings as needed
--- }
-
--- local function get_textobject_key(node, bufnr)
---   -- Try to load the textobjects module
---   local ok, textobjects = pcall(require, 'nvim-treesitter.textobjects.select')
---   if ok and textobjects and textobjects.textobject_at_point then
---     local objects = textobjects.textobject_at_point({ node = node, bufnr = bufnr })
---     for key, obj in pairs(objects) do
---       if obj:type() == node:type() then
---         return key
---       end
---     end
---   end
-
---   -- Fallback to our predefined map
---   return fallback_map[node:type()] or node:type():sub(1, 1)
--- end
-
--- function add_node_type_labels()
---   local bufnr = api.nvim_get_current_buf()
---   local row, col = unpack(api.nvim_win_get_cursor(0))
---   row = row - 1 -- Convert to 0-based index
-
---   api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
-
---   local success, parser = pcall(ts.get_parser, bufnr)
---   if not success then return end
-
---   local tree = parser:parse()[1]
---   local root = tree:root()
-
---   local node = root:named_descendant_for_range(row, col, row, col)
---   if not node then return end
-
---   while node do
---     local start_row, start_col, _, _ = node:range()
-
---     if start_row == row then
---       local label = get_textobject_key(node, bufnr)
-
---       api.nvim_buf_set_extmark(bufnr, ns_id, start_row, start_col, {
---         virt_text = { { label, "SpecialChar" } },
---         virt_text_pos = "overlay",
---         hl_mode = "combine",
---         priority = 100,
---       })
---     end
-
---     node = node:parent()
---   end
--- end
-
--- -- Set up an autocommand to run the function when the cursor moves
--- vim.cmd [[
---   augroup NodeTypeLabels
---     autocmd!
---     autocmd CursorMoved * lua add_node_type_labels()
---   augroup END
--- ]]
-
 local api = vim.api
 local ts = vim.treesitter
+
+local label_map = {
+  ['function.outer'] = 'f',
+  ['call.outer'] = 'F',
+  ['block.outer'] = 'b',
+  ['loop.outer'] = 'p',
+  ['statement.outer'] = 's',
+}
+
+local label_ns_id = api.nvim_create_namespace('TreesitterTextobjectLabels')
 
 local M = {}
 
@@ -170,15 +106,62 @@ end
 
 local namespace_id = api.nvim_create_namespace('TreesitterObjectHighlight')
 
-local function highlight_treesitter_node()
-  api.nvim_buf_clear_namespace(0, namespace_id, 0, -1)
+local function show_textobject_labels()
+  api.nvim_buf_clear_namespace(0, label_ns_id, 0, -1)
 
   if api.nvim_get_mode().mode ~= 'n' then
     return
   end
 
+  local bufnr = api.nvim_get_current_buf()
+  local cursor_row = api.nvim_win_get_cursor(0)[1] - 1
+
+  local success, parser = pcall(ts.get_parser, bufnr)
+  if not success then
+    return
+  end
+
+  local lang = parser:lang()
+  local query = ts.query.get(lang, 'textobjects')
+  if not query then
+    return
+  end
+
+  local tree = parser:tree_for_range({ cursor_row, 0, cursor_row, -1 })
+  if not tree then
+    return
+  end
+
+  local used_cols = {}
+  for id, node in query:iter_captures(tree:root(), bufnr, cursor_row, cursor_row + 1) do
+    local name = query.captures[id]
+    local key = label_map[name]
+    if key then
+      local start_row, start_col = node:range()
+      if start_row == cursor_row and not used_cols[start_col] then
+        used_cols[start_col] = true
+        api.nvim_buf_set_extmark(bufnr, label_ns_id, start_row, start_col, {
+          virt_text = { { key, 'SpecialChar' } },
+          virt_text_pos = 'overlay',
+          hl_mode = 'combine',
+          priority = 100,
+        })
+      end
+    end
+  end
+end
+
+local function highlight_treesitter_node()
+  api.nvim_buf_clear_namespace(0, namespace_id, 0, -1)
+
+  if api.nvim_get_mode().mode ~= 'n' then
+    show_textobject_labels()
+    return
+  end
+
   local ts_node = ts.get_node({ ignore_injections = false })
   if not ts_node then
+    show_textobject_labels()
     return
   end
 
@@ -189,6 +172,8 @@ local function highlight_treesitter_node()
     end_col = end_col,
     hl_group = 'TreesitterObjectHighlight',
   })
+
+  show_textobject_labels()
 end
 
 api.nvim_create_autocmd({ 'CursorMoved', 'ModeChanged' }, {
