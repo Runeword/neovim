@@ -1,13 +1,31 @@
 local api = vim.api
 local ts = vim.treesitter
 
-local label_map = {
-  ['function.outer'] = 'f',
-  ['call.outer'] = 'F',
-  ['block.outer'] = 'b',
-  ['loop.outer'] = 'p',
-  ['statement.outer'] = 's',
-}
+-- Build capture-to-key map from treesitter textobjects config (cached)
+local label_map_cache
+local function get_label_map()
+  if label_map_cache then
+    return label_map_cache
+  end
+  local ok, configs = pcall(require, 'nvim-treesitter.configs')
+  if not ok then
+    return {}
+  end
+  local ts_textobjects = configs.get_module('textobjects.select')
+  if not ts_textobjects or not ts_textobjects.keymaps then
+    return {}
+  end
+  local map = {}
+  for key, capture in pairs(ts_textobjects.keymaps) do
+    -- Only use single-char keys as labels (skip 'af', 'if', etc.)
+    if #key == 1 then
+      local name = capture:gsub('^@', '')
+      map[name] = key
+    end
+  end
+  label_map_cache = map
+  return map
+end
 
 local label_ns_id = api.nvim_create_namespace('TreesitterTextobjectLabels')
 
@@ -109,7 +127,8 @@ local namespace_id = api.nvim_create_namespace('TreesitterObjectHighlight')
 local function show_textobject_labels()
   api.nvim_buf_clear_namespace(0, label_ns_id, 0, -1)
 
-  if api.nvim_get_mode().mode ~= 'n' then
+  local mode = api.nvim_get_mode().mode
+  if mode ~= 'n' and mode ~= 'v' and mode ~= 'V' and mode ~= '\22' then
     return
   end
 
@@ -132,20 +151,39 @@ local function show_textobject_labels()
     return
   end
 
-  local used_cols = {}
+  local used_positions = {}
   for id, node in query:iter_captures(tree:root(), bufnr, cursor_row, cursor_row + 1) do
     local name = query.captures[id]
-    local key = label_map[name]
+    local key = get_label_map()[name]
     if key then
-      local start_row, start_col = node:range()
-      if start_row == cursor_row and not used_cols[start_col] then
-        used_cols[start_col] = true
-        api.nvim_buf_set_extmark(bufnr, label_ns_id, start_row, start_col, {
-          virt_text = { { key, 'SpecialChar' } },
-          virt_text_pos = 'overlay',
-          hl_mode = 'combine',
-          priority = 100,
-        })
+      local start_row, start_col, end_row, end_col = node:range()
+      local contains_cursor = start_row <= cursor_row
+        and (end_row > cursor_row or (end_row == cursor_row and end_col > 0))
+      if contains_cursor then
+        -- Start label
+        local label_col = math.max(start_col - 1, 0)
+        local pos_key = start_row .. ':' .. label_col
+        if not used_positions[pos_key] then
+          used_positions[pos_key] = true
+          api.nvim_buf_set_extmark(bufnr, label_ns_id, start_row, label_col, {
+            virt_text = { { key, 'Search' } },
+            virt_text_pos = 'overlay',
+            hl_mode = 'replace',
+            priority = 100,
+          })
+        end
+
+        -- End label (at end_col, i.e. one past the last char of the node)
+        local end_pos_key = end_row .. ':' .. end_col
+        if not used_positions[end_pos_key] then
+          used_positions[end_pos_key] = true
+          api.nvim_buf_set_extmark(bufnr, label_ns_id, end_row, end_col, {
+            virt_text = { { key, 'ErrorMsg' } },
+            virt_text_pos = 'overlay',
+            hl_mode = 'replace',
+            priority = 100,
+          })
+        end
       end
     end
   end
