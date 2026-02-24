@@ -1,6 +1,9 @@
 local api = vim.api
 local ts = vim.treesitter
 
+api.nvim_set_hl(0, 'GraspLabelStart', { bg = '#5d00ff' })
+api.nvim_set_hl(0, 'GraspLabelEnd', { fg = '#000000', bg = '#00ff9f' })
+
 -- Build capture-to-key map from treesitter textobjects config (cached)
 local label_map_cache
 local function get_label_map()
@@ -166,7 +169,7 @@ local function show_textobject_labels()
         if not used_positions[pos_key] then
           used_positions[pos_key] = true
           api.nvim_buf_set_extmark(bufnr, label_ns_id, start_row, label_col, {
-            virt_text = { { key, 'Search' } },
+            virt_text = { { key, 'GraspLabelStart' } },
             virt_text_pos = 'overlay',
             hl_mode = 'replace',
             priority = 100,
@@ -178,7 +181,7 @@ local function show_textobject_labels()
         if not used_positions[end_pos_key] then
           used_positions[end_pos_key] = true
           api.nvim_buf_set_extmark(bufnr, label_ns_id, end_row, end_col, {
-            virt_text = { { key, 'ErrorMsg' } },
+            virt_text = { { key, 'GraspLabelEnd' } },
             virt_text_pos = 'overlay',
             hl_mode = 'replace',
             priority = 100,
