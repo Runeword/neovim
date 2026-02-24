@@ -10,91 +10,118 @@ return {
   },
 
   init = function()
-    vim.api.nvim_create_augroup('dap', { clear = true, })
+    vim.api.nvim_create_augroup('dap', { clear = true })
     vim.api.nvim_create_autocmd('colorscheme', {
       group = 'dap',
       pattern = '*',
       callback = function()
-        vim.api.nvim_set_hl(0, 'DapBreakpoint',          { fg = '#e4e8f2', })
-        vim.api.nvim_set_hl(0, 'DapBreakpointCondition', { fg = '#e4e8f2', })
-        vim.api.nvim_set_hl(0, 'DapLogPoint',            { fg = '#e4e8f2', })
-        vim.api.nvim_set_hl(0, 'DapStopped',             { fg = '#c45661', })
+        vim.api.nvim_set_hl(0, 'DapBreakpoint', { fg = '#e4e8f2' })
+        vim.api.nvim_set_hl(0, 'DapBreakpointCondition', { fg = '#e4e8f2' })
+        vim.api.nvim_set_hl(0, 'DapLogPoint', { fg = '#e4e8f2' })
+        vim.api.nvim_set_hl(0, 'DapStopped', { fg = '#c45661' })
       end,
     })
   end,
 
   config = function()
-    vim.fn.sign_define('DapBreakpointCondition',
-      {
-        text = '󰇼',
-        texthl = 'DapBreakpointCondition',
-        linehl = '',
-        numhl = '',
-      })
-    vim.fn.sign_define('DapBreakpoint', { text = '', texthl = 'DapBreakpoint', linehl = '', numhl = '', })
-    vim.fn.sign_define('DapStopped',    { text = '󰓗', texthl = 'DapStopped', linehl = '', numhl = '', })
-    vim.fn.sign_define('DapLogPoint',   { text = '󱂅', texthl = 'DapLogPoint', linehl = '', numhl = '', })
-
+    vim.fn.sign_define('DapBreakpointCondition', {
+      text = '󰇼',
+      texthl = 'DapBreakpointCondition',
+      linehl = '',
+      numhl = '',
+    })
+    vim.fn.sign_define('DapBreakpoint', { text = '', texthl = 'DapBreakpoint', linehl = '', numhl = '' })
+    vim.fn.sign_define('DapStopped', { text = '󰓗', texthl = 'DapStopped', linehl = '', numhl = '' })
+    vim.fn.sign_define('DapLogPoint', { text = '󱂅', texthl = 'DapLogPoint', linehl = '', numhl = '' })
 
     local mappings = require('hydra')({
-      mode = { 'o', 'n', 'x', },
+      mode = { 'o', 'n', 'x' },
 
       config = {
-        hint = { type = 'window', },
+        hint = { type = 'window' },
         color = 'pink',
         foreign_keys = 'run',
         exit = false,
       },
 
       heads = {
-        { 'n',       require('dap').continue, },
-        { '<Enter>', require('dap').continue, },
-        { 'x',       require('dap').close, },
-        { 'X',       require('dap').terminate, },
-        { 't', function()
-          require('dap').run({
-            type = 'go',
-            name = 'Debug test (go.mod)',
-            request = 'launch',
-            mode = 'test',
-            program = './${relativeFileDirname}',
-          })
-        end, },
-        { 'v',         require('dap').step_over, },
-        { 'i',         require('dap').step_into, },
-        { 'o',         require('dap').step_out, },
-        { 'b',         require('dap').toggle_breakpoint, },
-        { '<C-Space>', require('dap').clear_breakpoints, },
-        { 'c',         function() require('dap').toggle_breakpoint(vim.fn.input('Breakpoint condition: ')) end, },
-        { 'l',         function() require('dap').toggle_breakpoint(nil, nil, vim.fn.input('Log point message: ')) end, },
-        { 'r',         function() require('dap').repl.toggle({ height = 6, }) end, },
-        { 'p',         require('dap.ui.widgets').preview, },
-        { 't', function()
-          require('dap').run({
-            type = 'go',
-            name = 'Debug test (go.mod)',
-            request = 'launch',
-            mode = 'test',
-            program = './${relativeFileDirname}',
-          })
-        end, },
-        { 'f', function()
-          local widgets = require('dap.ui.widgets')
-          widgets.centered_float(widgets.frames)
-        end, },
-        { 's', function()
-          local widgets = require('dap.ui.widgets')
-          widgets.centered_float(widgets.scopes)
-        end, },
+        { 'n', require('dap').continue },
+        { '<Enter>', require('dap').continue },
+        { 'x', require('dap').close },
+        { 'X', require('dap').terminate },
+        {
+          't',
+          function()
+            require('dap').run({
+              type = 'go',
+              name = 'Debug test (go.mod)',
+              request = 'launch',
+              mode = 'test',
+              program = './${relativeFileDirname}',
+            })
+          end,
+        },
+        { 'v', require('dap').step_over },
+        { 'i', require('dap').step_into },
+        { 'o', require('dap').step_out },
+        { 'b', require('dap').toggle_breakpoint },
+        { '<C-Space>', require('dap').clear_breakpoints },
+        {
+          'c',
+          function()
+            require('dap').toggle_breakpoint(vim.fn.input('Breakpoint condition: '))
+          end,
+        },
+        {
+          'l',
+          function()
+            require('dap').toggle_breakpoint(nil, nil, vim.fn.input('Log point message: '))
+          end,
+        },
+        {
+          'r',
+          function()
+            require('dap').repl.toggle({ height = 6 })
+          end,
+        },
+        { 'p', require('dap.ui.widgets').preview },
+        {
+          't',
+          function()
+            require('dap').run({
+              type = 'go',
+              name = 'Debug test (go.mod)',
+              request = 'launch',
+              mode = 'test',
+              program = './${relativeFileDirname}',
+            })
+          end,
+        },
+        {
+          'f',
+          function()
+            local widgets = require('dap.ui.widgets')
+            widgets.centered_float(widgets.frames)
+          end,
+        },
+        {
+          's',
+          function()
+            local widgets = require('dap.ui.widgets')
+            widgets.centered_float(widgets.scopes)
+          end,
+        },
         -- { 'r',       require('dap').restart, },
-        { 'q',     nil, { exit = true, }, },
-        { '<Esc>', nil, { exit = true, }, },
+        { 'q', nil, { exit = true } },
+        { '<Esc>', nil, { exit = true } },
       },
     })
 
-    vim.keymap.set({ 'n', 'x', }, '<Leader>d', function() mappings:activate() end)
+    vim.keymap.set({ 'n', 'x' }, '<Leader>d', function()
+      mappings:activate()
+    end)
 
-    require('dap').set_log_level('WARN');
+    require('dap').set_log_level('WARN')
 
     -- require('dap').adapters.bashdb = {
     --   type = 'executable',
