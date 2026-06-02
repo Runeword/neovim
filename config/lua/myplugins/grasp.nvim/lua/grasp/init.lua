@@ -139,7 +139,7 @@ local function show_textobject_labels()
   local cursor_row = api.nvim_win_get_cursor(0)[1] - 1
 
   local success, parser = pcall(ts.get_parser, bufnr)
-  if not success then
+  if not success or not parser then
     return
   end
 
