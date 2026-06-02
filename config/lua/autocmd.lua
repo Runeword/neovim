@@ -153,12 +153,20 @@ vim.api.nvim_create_autocmd('BufLeave', {
   group = 'float_cleanup',
   pattern = '*',
   callback = function()
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      local config = vim.api.nvim_win_get_config(win)
-      if config.relative ~= '' and vim.api.nvim_win_is_valid(win) then
-        pcall(vim.api.nvim_win_close, win, false)
+    vim.schedule(function()
+      local cur_win = vim.api.nvim_get_current_win()
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if win ~= cur_win and vim.api.nvim_win_is_valid(win) then
+          local config = vim.api.nvim_win_get_config(win)
+          if config.relative ~= '' then
+            local buf = vim.api.nvim_win_get_buf(win)
+            if vim.bo[buf].filetype == '' then
+              pcall(vim.api.nvim_win_close, win, false)
+            end
+          end
+        end
       end
-    end
+    end)
   end,
   desc = 'Close floating windows safely when leaving a buffer',
 })
