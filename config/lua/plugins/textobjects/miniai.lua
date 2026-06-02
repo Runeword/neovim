@@ -9,11 +9,18 @@ return {
 
     require('mini.ai').setup({
       custom_textobjects = {
-        f = false,
-        b = false,
-        p = false,
-        a = gen_spec.argument({ brackets = { '%b()', '%b{}', '%b[]', }, }),
-        o = { { '%b()', '%b[]', '%b{}', '%b<>', }, '^.().*().$', },
+        -- Treesitter-backed text objects. Queries come from
+        -- nvim-treesitter-textobjects (queries-only, see flake.nix and
+        -- treesitter.lua); previously these were configured via
+        -- `nvim-treesitter.configs.setup{ textobjects = ... }`.
+        f = gen_spec.treesitter({ a = '@function.outer', i = '@function.inner' }),
+        F = gen_spec.treesitter({ a = '@call.outer', i = '@call.inner' }),
+        b = gen_spec.treesitter({ a = '@block.outer', i = '@block.inner' }),
+        p = gen_spec.treesitter({ a = '@loop.outer', i = '@loop.inner' }),
+        s = gen_spec.treesitter({ a = '@statement.outer', i = '@statement.outer' }),
+
+        a = gen_spec.argument({ brackets = { '%b()', '%b{}', '%b[]' } }),
+        o = { { '%b()', '%b[]', '%b{}', '%b<>' }, '^.().*().$' },
         -- a = gen_spec.argument({ brackets = { '%b()' } }),
         -- o = gen_spec.argument({ brackets = { '%b{}' } }),
         -- e = gen_spec.argument({ brackets = { '%b[]' } }),
@@ -42,6 +49,6 @@ return {
       search_method = 'cover_or_nearest',
     })
 
-    vim.keymap.set({ 'o', 'x' }, 'o', 'io', { remap = true, })
+    vim.keymap.set({ 'o', 'x' }, 'o', 'io', { remap = true })
   end,
 }
