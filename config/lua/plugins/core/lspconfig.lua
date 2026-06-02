@@ -67,7 +67,6 @@ return {
       local default_opts = {
         capabilities = cmp_exists and cmp_nvim_lsp.default_capabilities() or {}, -- hrsh7th/nvim-cmp
         on_attach = on_attach_server(true),
-        ['settings.format.enable'] = true,
         flags = { debounce_text_changes = 0 },
       }
       return vim.tbl_deep_extend('force', default_opts, override_opts or {})
@@ -95,7 +94,16 @@ return {
     vim.lsp.enable('eslint')
     vim.lsp.config('jsonls', set_config())
     vim.lsp.enable('jsonls')
-    vim.lsp.config('gopls', set_config())
+    vim.lsp.config(
+      'gopls',
+      set_config({
+        settings = {
+          gopls = {
+            gofumpt = true,
+          },
+        },
+      })
+    )
     vim.lsp.enable('gopls')
     vim.lsp.config('rust_analyzer', set_config())
     vim.lsp.enable('rust_analyzer')
@@ -123,7 +131,6 @@ return {
       set_config({
         on_attach = on_attach_server(false),
         autostart = true,
-        ['settings.format.enable'] = false,
         root_dir = safe_root_dir({ 'package.json', 'tsconfig.json', 'jsconfig.json' }),
       })
     )
