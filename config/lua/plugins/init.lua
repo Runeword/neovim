@@ -1,12 +1,12 @@
 local vim = vim
 
 return {
-  { 'jghauser/mkdir.nvim', },
+  { 'jghauser/mkdir.nvim' },
 
   {
-    'ahmedkhalf/project.nvim',
+    'DrKJeff16/project.nvim',
     config = function()
-      require('project_nvim').setup()
+      require('project').setup()
     end,
   },
 
