@@ -1,89 +1,45 @@
 local vim = vim
 
+-- nvim-treesitter-textobjects' Lua loader still references the removed
+-- `nvim-treesitter.configs` module, so we don't install the plugin; only
+-- its query files are exposed by the wrapper. Add them to runtimepath so
+-- mini.ai's `gen_spec.treesitter()` can find `queries/<lang>/textobjects.scm`.
+local ts_to_queries = vim.env.NVIM_TS_TEXTOBJECTS_QUERIES
+if ts_to_queries then
+  vim.opt.runtimepath:append(ts_to_queries)
+end
+
 return {
-  {
-    'nvim-treesitter/nvim-treesitter-textobjects',
-    after = 'nvim-treesitter',
-    requires = 'nvim-treesitter/nvim-treesitter',
-  },
+  'nvim-treesitter/nvim-treesitter',
 
-  {
-    'nvim-treesitter/nvim-treesitter',
+  config = function()
+    -- Configures parser install paths. Grammars are Nix-installed under
+    -- the plugin's own derivation, so install_dir is irrelevant in practice,
+    -- but setup() must be called or :TSInstall et al. won't work.
+    require('nvim-treesitter').setup({})
 
-    build = ':TSUpdate',
+    -- Enable highlight + indent per buffer. The new API delegates to
+    -- Neovim's built-in vim.treesitter; nvim-treesitter only provides
+    -- the indent helper.
+    vim.api.nvim_create_autocmd('FileType', {
+      group = vim.api.nvim_create_augroup('TreesitterStart', { clear = true }),
+      callback = function(args)
+        local bufnr = args.buf
+        local lang = vim.treesitter.language.get_lang(vim.bo[bufnr].filetype)
+        if lang and pcall(vim.treesitter.start, bufnr, lang) then
+          vim.bo[bufnr].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+        end
+      end,
+    })
 
-    config = function()
-      require('nvim-treesitter.configs').setup({
-        ensure_installed = 'all',
-        ignore_install = { 'ipkg' },
-        highlight = { enable = true, },
-        indent = { enable = true, },
-        autopairs = { enable = true, }, -- windwp/nvim-autopairs
-        autotag = { enable = true, },   -- windwp/nvim-ts-autotag
-
-        -- andymass/vim-matchup
-        matchup = {
-          enable = true,
-          disable_virtual_text = true,
-        },
-
-        -- filNaj/tree-setter
-        tree_setter = {
-          enable = true,
-        },
-
-        -- p00f/nvim-ts-rainbow
-        rainbow = {
-          enable = false,
-          max_file_lines = nil,
-          colors = {
-            '#FF0048',
-            '#B800FF',
-            '#FAFF00',
-          },
-        },
-
-        -- nvim-treesitter/nvim-treesitter-textobjects
-        textobjects = {
-          select = {
-            enable = true,
-            lookahead = true,
-            keymaps = {
-              ['f'] = '@function.outer',
-              ['af'] = '@function.outer',
-              ['if'] = '@function.inner',
-              ['F'] = '@call.outer',
-              ['aF'] = '@call.outer',
-              ['iF'] = '@call.inner',
-              ['ab'] = '@block.outer',
-              ['ib'] = '@block.inner',
-              ['ap'] = '@loop.outer',
-              ['ip'] = '@loop.inner',
-              ['s'] = '@statement.outer',
-            },
-          },
-
-          -- move = {
-          --   enable = true,
-          --   set_jumps = true,
-          -- goto_next_start = {
-          --   [")"] = "@parameter.inner",
-          -- },
-          -- goto_previous_start = {
-          --   ["("] = "@parameter.inner",
-          -- },
-          -- },
-        },
-      })
-
-      -- vim.keymap.set({ 'o', 'x', }, 'ib', function()
-      --   require('nvim-treesitter.textobjects.select').select_textobject('@block.inner')
-      -- end)
-      -- vim.keymap.set({ 'o', 'x', }, 'ab', function()
-      --   require('nvim-treesitter.textobjects.select').select_textobject('@block.outer')
-      -- end)
-      vim.keymap.set({ 'o', }, 'b', 'ib', { remap = true, })
-      vim.keymap.set({ 'o', }, 'p', 'ip', { remap = true, })
-    end,
-  },
+    -- Operator-pending aliases: bare keys map to the inner/outer variant
+    -- mini.ai exposes. `f`/`F`/`s` mirror the old `@function.outer`,
+    -- `@call.outer`, `@statement.outer` behavior; `b`/`p` resolve to the
+    -- inner block/loop to match prior muscle memory.
+    vim.keymap.set({ 'o', 'x' }, 'f', 'af', { remap = true })
+    vim.keymap.set({ 'o', 'x' }, 'F', 'aF', { remap = true })
+    vim.keymap.set({ 'o', 'x' }, 's', 'as', { remap = true })
+    vim.keymap.set({ 'o' }, 'b', 'ib', { remap = true })
+    vim.keymap.set({ 'o' }, 'p', 'ip', { remap = true })
+  end,
 }
