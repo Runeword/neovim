@@ -5,14 +5,33 @@ return {
 
   -- 'Runeword/appender.nvim',
 
-  dir = vim.fn.stdpath("config") .. "/lua/myplugins/appender.nvim",
+  dir = vim.fn.stdpath('config') .. '/lua/myplugins/appender.nvim',
 
   config = function()
-    vim.keymap.set({ 'x', 'n', }, 'ga', require('appender').appendCharEndLine,   { expr = true, })
-    vim.keymap.set({ 'x', 'n', }, 'gi', require('appender').appendCharStartLine, { expr = true, })
-    -- vim.keymap.set({ 'x', 'n', }, 'ra', require('appender').appendCharAfterCursor,  { expr = true, })
-    -- vim.keymap.set({ 'x', 'n', }, 'ri', require('appender').appendCharBeforeCursor, { expr = true, })
-    vim.keymap.set({ 'n', }, 'go', require('appender').appendNewlineBelow, { expr = true, })
-    vim.keymap.set({ 'n', }, 'gO', require('appender').appendNewlineAbove, { expr = true, })
+    require('appender').setup()
+    vim.keymap.set(
+      { 'x', 'n' },
+      'ga',
+      require('appender').appendCharEndLine,
+      { expr = true, desc = 'Append char at end of line' }
+    )
+    vim.keymap.set(
+      { 'x', 'n' },
+      'gi',
+      require('appender').appendCharStartLine,
+      { expr = true, desc = 'Append char at start of line' }
+    )
+    vim.keymap.set(
+      { 'n' },
+      'go',
+      require('appender').appendNewlineBelow,
+      { expr = true, desc = 'Append newline below' }
+    )
+    vim.keymap.set(
+      { 'n' },
+      'gO',
+      require('appender').appendNewlineAbove,
+      { expr = true, desc = 'Append newline above' }
+    )
   end,
 }
