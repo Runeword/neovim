@@ -48,15 +48,20 @@ local function appendSingleChar(getColumn)
       local len = string.len(str)
 
       if len ~= 0 and len >= col then
-        table.insert(extmarks, vim.api.nvim_buf_set_extmark(0, namespace, row, col, {
-          virt_text = { { '_', 'AppenderChar' } },
-          virt_text_pos = 'inline',
-          priority = 200,
-        }))
+        table.insert(
+          extmarks,
+          vim.api.nvim_buf_set_extmark(0, namespace, row, col, {
+            virt_text = { { '_', 'AppenderChar' } },
+            virt_text_pos = 'inline',
+            priority = 200,
+          })
+        )
       end
     end
 
-    if #extmarks == 0 then return end
+    if #extmarks == 0 then
+      return
+    end
 
     vim.api.nvim_command('redraw')
 
@@ -67,7 +72,9 @@ local function appendSingleChar(getColumn)
     end
 
     local exitKeys = { [''] = true }
-    if not ok or exitKeys[charstr] then return end
+    if not ok or exitKeys[charstr] then
+      return
+    end
 
     input_cache = charstr
   end
@@ -83,20 +90,34 @@ local function appendSingleChar(getColumn)
   end
 end
 
-function M._appendCharEndLine()    return appendSingleChar(colAfterLine) end
-function M._appendCharStartLine()  return appendSingleChar(colBeforeLine) end
-function M._appendCharBeforeCursor() return appendSingleChar(colBeforeCursor) end
-function M._appendCharAfterCursor()  return appendSingleChar(colAfterCursor) end
+function M._appendCharEndLine()
+  return appendSingleChar(colAfterLine)
+end
+function M._appendCharStartLine()
+  return appendSingleChar(colBeforeLine)
+end
+function M._appendCharBeforeCursor()
+  return appendSingleChar(colBeforeCursor)
+end
+function M._appendCharAfterCursor()
+  return appendSingleChar(colAfterCursor)
+end
 
 local function appendNewLine(rowOffset)
   local newLines = {}
-  for i = 1, pending_count do newLines[i] = '' end
+  for i = 1, pending_count do
+    newLines[i] = ''
+  end
   local row = vim.api.nvim_win_get_cursor(0)[1]
   vim.api.nvim_buf_set_lines(0, row + rowOffset, row + rowOffset, false, newLines)
 end
 
-function M._appendNewlineBelow() appendNewLine(0) end
-function M._appendNewlineAbove() appendNewLine(-1) end
+function M._appendNewlineBelow()
+  appendNewLine(0)
+end
+function M._appendNewlineAbove()
+  appendNewLine(-1)
+end
 
 local function expr_op(name)
   pending_count = vim.v.count1
@@ -105,13 +126,29 @@ local function expr_op(name)
   return mode:match('[vV\22]') and 'g@' or 'g@l'
 end
 
-function M.appendCharEndLine()      input_cache = nil; return expr_op('_appendCharEndLine')      end
-function M.appendCharStartLine()    input_cache = nil; return expr_op('_appendCharStartLine')    end
-function M.appendCharBeforeCursor() input_cache = nil; return expr_op('_appendCharBeforeCursor') end
-function M.appendCharAfterCursor()  input_cache = nil; return expr_op('_appendCharAfterCursor')  end
+function M.appendCharEndLine()
+  input_cache = nil
+  return expr_op('_appendCharEndLine')
+end
+function M.appendCharStartLine()
+  input_cache = nil
+  return expr_op('_appendCharStartLine')
+end
+function M.appendCharBeforeCursor()
+  input_cache = nil
+  return expr_op('_appendCharBeforeCursor')
+end
+function M.appendCharAfterCursor()
+  input_cache = nil
+  return expr_op('_appendCharAfterCursor')
+end
 
-function M.appendNewlineAbove() return expr_op('_appendNewlineAbove') end
-function M.appendNewlineBelow() return expr_op('_appendNewlineBelow') end
+function M.appendNewlineAbove()
+  return expr_op('_appendNewlineAbove')
+end
+function M.appendNewlineBelow()
+  return expr_op('_appendNewlineBelow')
+end
 
 function M.setup(opts)
   config = vim.tbl_extend('force', config, opts or {})
