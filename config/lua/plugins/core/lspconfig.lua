@@ -180,7 +180,8 @@ return {
         suffix = '',
 
         format = function(diag)
-          return string.format('%s %s\n    %s', diag.source, diag.user_data.lsp.code, diag.message)
+          local code = diag.user_data and diag.user_data.lsp and diag.user_data.lsp.code or ''
+          return string.format('%s %s\n    %s', diag.source or '', code, diag.message)
         end,
       },
     })
