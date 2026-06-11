@@ -1,10 +1,14 @@
 local api = vim.api
 local ts = vim.treesitter
 
-api.nvim_set_hl(0, 'GraspLabelStart', { bg = '#5d00ff' })
-api.nvim_set_hl(0, 'GraspLabelEnd', { fg = '#000000', bg = '#00ff9f' })
+local M = {}
 
--- Build capture-to-key map from treesitter textobjects config (cached)
+local config = {
+  hl_label_start = { bg = '#5d00ff' },
+  hl_label_end = { fg = '#000000', bg = '#00ff9f' },
+  hl_node = { link = 'Visual' },
+}
+
 local label_map_cache
 local function get_label_map()
   if label_map_cache then
@@ -20,7 +24,6 @@ local function get_label_map()
   end
   local map = {}
   for key, capture in pairs(ts_textobjects.keymaps) do
-    -- Only use single-char keys as labels (skip 'af', 'if', etc.)
     if #key == 1 then
       local name = capture:gsub('^@', '')
       map[name] = key
@@ -31,34 +34,46 @@ local function get_label_map()
 end
 
 local label_ns_id = api.nvim_create_namespace('TreesitterTextobjectLabels')
+local namespace_id = api.nvim_create_namespace('TreesitterObjectHighlight')
 
-local M = {}
+local function apply_highlights()
+  api.nvim_set_hl(0, 'GraspLabelStart', config.hl_label_start)
+  api.nvim_set_hl(0, 'GraspLabelEnd', config.hl_label_end)
+  api.nvim_set_hl(0, 'TreesitterObjectHighlight', vim.tbl_extend('keep', config.hl_node, { default = true }))
+end
 
 function M.select_treesitter_node_under_cursor()
   local current_buffer_id = api.nvim_get_current_buf()
 
   local cursor_pos = api.nvim_win_get_cursor(0)
-  local cursor_row = cursor_pos[1] - 1 -- Convert row to 0-based index
+  local cursor_row = cursor_pos[1] - 1
   local cursor_col = cursor_pos[2]
 
   local success, ts_parser = pcall(ts.get_parser, current_buffer_id)
-  if not success then
+  if not success or not ts_parser then
     return
   end
 
   local ts_tree = ts_parser:tree_for_range({ cursor_row, cursor_col, cursor_row, cursor_col })
+  if not ts_tree then
+    return
+  end
 
-  -- Find the smallest named node at the cursor position
   local ts_node = ts_tree:root():named_descendant_for_range(cursor_row, cursor_col, cursor_row, cursor_col)
+  if not ts_node then
+    return
+  end
 
-  -- Get the node's range
   local start_row, start_col, end_row, end_col = ts_node:range()
 
-  -- Set marks for the start and end of the node
-  api.nvim_buf_set_mark(current_buffer_id, '<', start_row + 1, start_col, {})
-  api.nvim_buf_set_mark(current_buffer_id, '>', end_row + 1, end_col - 1, {})
+  if end_col == 0 and end_row > start_row then
+    end_row = end_row - 1
+    end_col = #(api.nvim_buf_get_lines(current_buffer_id, end_row, end_row + 1, false)[1] or '')
+  end
 
-  -- Visually select the node
+  api.nvim_buf_set_mark(current_buffer_id, '<', start_row + 1, start_col, {})
+  api.nvim_buf_set_mark(current_buffer_id, '>', end_row + 1, math.max(end_col - 1, 0), {})
+
   api.nvim_command('normal! gv')
 end
 
@@ -67,13 +82,24 @@ function M.move_to_next_treesitter_node()
   local current_buffer_filetype = api.nvim_get_option_value('filetype', { buf = current_buffer_id })
 
   local success, ts_parser = pcall(ts.get_parser, current_buffer_id)
-  if not success then
+  if not success or not ts_parser then
     return
   end
 
-  local ts_tree = ts_parser:parse()[1]
+  local trees = ts_parser:parse()
+  local ts_tree = trees and trees[1]
+  if not ts_tree then
+    return
+  end
+
   local ts_lang = ts.language.get_lang(current_buffer_filetype)
-  local ts_query = ts.query.parse(ts_lang, '(_) @node')
+  if not ts_lang then
+    return
+  end
+  local ok, ts_query = pcall(ts.query.parse, ts_lang, '(_) @node')
+  if not ok then
+    return
+  end
 
   local cursor_pos = api.nvim_win_get_cursor(0)
   local cursor_row = cursor_pos[1]
@@ -96,13 +122,24 @@ function M.move_to_prev_treesitter_node()
   local current_buffer_filetype = api.nvim_get_option_value('filetype', { buf = current_buffer_id })
 
   local success, ts_parser = pcall(ts.get_parser, current_buffer_id)
-  if not success then
+  if not success or not ts_parser then
     return
   end
 
-  local ts_tree = ts_parser:parse()[1]
+  local trees = ts_parser:parse()
+  local ts_tree = trees and trees[1]
+  if not ts_tree then
+    return
+  end
+
   local ts_lang = ts.language.get_lang(current_buffer_filetype)
-  local ts_query = ts.query.parse(ts_lang, '(_) @node')
+  if not ts_lang then
+    return
+  end
+  local ok, ts_query = pcall(ts.query.parse, ts_lang, '(_) @node')
+  if not ok then
+    return
+  end
 
   local cursor_pos = api.nvim_win_get_cursor(0)
   local cursor_row = cursor_pos[1]
@@ -124,8 +161,6 @@ function M.move_to_prev_treesitter_node()
     end
   end
 end
-
-local namespace_id = api.nvim_create_namespace('TreesitterObjectHighlight')
 
 local function show_textobject_labels()
   api.nvim_buf_clear_namespace(0, label_ns_id, 0, -1)
@@ -163,7 +198,6 @@ local function show_textobject_labels()
       local contains_cursor = start_row <= cursor_row
         and (end_row > cursor_row or (end_row == cursor_row and end_col > 0))
       if contains_cursor then
-        -- Start label
         local label_col = math.max(start_col - 1, 0)
         local pos_key = start_row .. ':' .. label_col
         if not used_positions[pos_key] then
@@ -176,7 +210,6 @@ local function show_textobject_labels()
           })
         end
 
-        -- End label (at end_col, i.e. one past the last char of the node)
         local end_pos_key = end_row .. ':' .. end_col
         if not used_positions[end_pos_key] then
           used_positions[end_pos_key] = true
@@ -217,9 +250,20 @@ local function highlight_treesitter_node()
   show_textobject_labels()
 end
 
-api.nvim_create_autocmd({ 'CursorMoved', 'ModeChanged' }, {
-  group = api.nvim_create_augroup('TreesitterObjectHighlight', { clear = true }),
-  callback = highlight_treesitter_node,
-})
+function M.setup(opts)
+  config = vim.tbl_extend('force', config, opts or {})
+
+  apply_highlights()
+
+  local group = api.nvim_create_augroup('grasp', { clear = true })
+  api.nvim_create_autocmd({ 'CursorMoved', 'ModeChanged' }, {
+    group = group,
+    callback = highlight_treesitter_node,
+  })
+  api.nvim_create_autocmd('ColorScheme', {
+    group = group,
+    callback = apply_highlights,
+  })
+end
 
 return M
