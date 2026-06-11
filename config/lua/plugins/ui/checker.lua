@@ -8,10 +8,8 @@ return {
   dir = vim.fn.stdpath('config') .. '/lua/myplugins/checker.nvim',
 
   config = function()
-    vim.keymap.set('n', '<PageUp>', require('checker').prevDiagnostic, { noremap = true, silent = true, })
-    vim.keymap.set('n', '<PageDown>', require('checker').nextDiagnostic, { noremap = true, silent = true, })
-
-    -- vim.keymap.set('n', '<PageUp>', vim.diagnostic.goto_prev, { buffer = buffer, })
-    -- vim.keymap.set('n', '<PageDown>', vim.diagnostic.goto_next, { buffer = buffer, })
+    require('checker').setup()
+    vim.keymap.set('n', '<PageUp>', require('checker').prevDiagnostic, { silent = true, desc = 'Previous diagnostic' })
+    vim.keymap.set('n', '<PageDown>', require('checker').nextDiagnostic, { silent = true, desc = 'Next diagnostic' })
   end,
 }
