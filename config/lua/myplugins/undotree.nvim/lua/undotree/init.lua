@@ -44,18 +44,14 @@ function M.deleteUndoTree()
     return
   end
 
-  local start = vim.fn.getpos("'[")
-  local finish = vim.fn.getpos("']")
-  local view = vim.fn.winsaveview()
-
-  local prev_undoreload = vim.o.undoreload
-  vim.o.undoreload = 0
-  vim.cmd('edit')
-  vim.o.undoreload = prev_undoreload
-
-  vim.fn.winrestview(view)
-  vim.fn.setpos("'[", start)
-  vim.fn.setpos("']", finish)
+  local was_modified = vim.bo.modified
+  local old = vim.bo.undolevels
+  vim.bo.undolevels = -1
+  vim.cmd([[exe "normal! a \<BS>\<Esc>"]])
+  vim.bo.undolevels = old
+  if not was_modified then
+    vim.bo.modified = false
+  end
 
   notify('Delete undo tree', config.notify_icon_delete)
 end
