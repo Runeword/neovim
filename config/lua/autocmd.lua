@@ -1,12 +1,23 @@
 local vim = vim
 
--- Prevent escape from moving the cursor one character to the left
-vim.cmd([[
-let CursorColumnI = 0
-autocmd InsertEnter * let CursorColumnI = col('.')
-autocmd CursorMovedI * let CursorColumnI = col('.')
-autocmd InsertLeave * if col('.') != CursorColumnI | call cursor(0, col('.')+1) | endif
-]])
+local cursor_column_i = 0
+vim.api.nvim_create_augroup('cursor_escape', { clear = true })
+vim.api.nvim_create_autocmd({ 'InsertEnter', 'CursorMovedI' }, {
+  group = 'cursor_escape',
+  callback = function()
+    cursor_column_i = vim.fn.col('.')
+  end,
+})
+vim.api.nvim_create_autocmd('InsertLeave', {
+  group = 'cursor_escape',
+  callback = function()
+    local col = vim.fn.col('.')
+    if col ~= cursor_column_i then
+      vim.fn.cursor(0, col + 1)
+    end
+  end,
+  desc = 'Prevent escape from moving the cursor one character to the left',
+})
 
 -- vim.api.nvim_create_augroup('quit', { clear = true, })
 -- vim.api.nvim_create_autocmd('BufDelete', {
@@ -99,12 +110,14 @@ vim.api.nvim_create_autocmd('FileType', {
 vim.api.nvim_create_autocmd('FileType', {
   group = 'quickfix',
   pattern = 'qf',
-  callback = function()
-    vim.cmd(math.max(math.min(vim.fn.line('$'), 10), 3) .. 'wincmd _')
+  callback = function(args)
+    local lines = vim.api.nvim_buf_line_count(args.buf)
+    vim.cmd(math.max(math.min(lines, 10), 3) .. 'wincmd _')
   end,
   desc = 'Automatically fitting a quickfix window to 10 lines max and 3 lines min height',
 })
 vim.api.nvim_create_autocmd('FileType', {
+  group = 'quickfix',
   pattern = 'qf',
   callback = function()
     vim.schedule(function()
@@ -114,7 +127,9 @@ vim.api.nvim_create_autocmd('FileType', {
   desc = 'Automatically open the first item in the quickfix window',
 })
 
+vim.api.nvim_create_augroup('lsp_keymaps', { clear = true })
 vim.api.nvim_create_autocmd('LspAttach', {
+  group = 'lsp_keymaps',
   callback = function()
     pcall(vim.keymap.del, 'n', 'grn')
     pcall(vim.keymap.del, { 'n', 'v' }, 'gra')
