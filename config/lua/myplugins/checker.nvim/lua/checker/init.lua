@@ -1,75 +1,71 @@
-local vim = vim
-
 local M = {}
 
-local function openDiagnosticInSplit(diag)
-  if not diag then return end
+local config = {
+  split_height = 5,
+}
 
-  -- print(vim.inspect(diag))
-  -- vim.diagnostic.goto_next({ float = false, })
-  vim.api.nvim_win_set_cursor(0, {diag.lnum + 1, diag.col})
+local ns = vim.api.nvim_create_namespace('checker')
+
+local severity_highlight = {
+  [vim.diagnostic.severity.ERROR] = 'DiagnosticUnderlineError',
+  [vim.diagnostic.severity.WARN] = 'DiagnosticUnderlineWarn',
+  [vim.diagnostic.severity.INFO] = 'DiagnosticUnderlineInfo',
+  [vim.diagnostic.severity.HINT] = 'DiagnosticUnderlineHint',
+}
+
+local function ensure_window()
+  local buffer_id = vim.fn.bufnr('diagnostic_message')
+  if buffer_id == -1 then
+    buffer_id = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(buffer_id, 'diagnostic_message')
+  end
+  if vim.fn.bufwinid(buffer_id) == -1 then
+    vim.api.nvim_command('belowright ' .. config.split_height .. ' split')
+    vim.api.nvim_win_set_buf(0, buffer_id)
+    vim.wo[0].number = false
+  end
+  return buffer_id
+end
+
+local function openDiagnosticInSplit(diag)
+  if not diag then
+    return
+  end
 
   local current_window = vim.api.nvim_get_current_win()
   local current_buffer = vim.api.nvim_get_current_buf()
-  -- local current_filetype = vim.api.nvim_buf_get_option(0, 'filetype')
 
-  -- vim.diagnostic.goto_next({win_id = current_window })
+  local buffer_id = ensure_window()
 
-  local buffer_id = vim.fn.bufnr('diagnostic_message')
-  if buffer_id == -1 then
-    -- Create a new buffer
-    buffer_id = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(buffer_id, 'diagnostic_message')
-
-    -- Open a new split window
-    vim.api.nvim_command('belowright 5 split')
-
-    -- Set the new buffer in the split window
-    vim.api.nvim_win_set_buf(0, buffer_id)
-    vim.api.nvim_buf_set_option(buffer_id, 'number', false)
-    -- vim.api.nvim_buf_set_option(buffer_id, 'filetype', current_filetype)
-  end
-
-  -- Set the diagnostic message in the new buffer
-  local diag_line_raw = vim.api.nvim_buf_get_lines(current_buffer, diag.lnum, diag.lnum + 1, false)[1]
-  local diag_line = diag_line_raw:gsub("^%s*", "")
+  local diag_line_raw = vim.api.nvim_buf_get_lines(current_buffer, diag.lnum, diag.lnum + 1, false)[1] or ''
+  local diag_line = diag_line_raw:gsub('^%s*', '')
   local offset = math.abs(#diag_line_raw - #diag_line)
 
-  -- print(vim.inspect(diag))
-  vim.api.nvim_buf_set_lines(buffer_id, 0, -1, false,
-    {
-      diag_line,
-      (diag.source or '') .. ' ' .. (diag.code or ''),
-      (diag.message or ''),
-    })
+  vim.api.nvim_buf_set_lines(buffer_id, 0, -1, false, {
+    diag_line,
+    (diag.source or '') .. ' ' .. (diag.code or ''),
+    (diag.message or ''),
+  })
 
-  -- local parser = vim.treesitter.get_string_parser(diag_line, 'lua')
-  -- local tree = (parser:parse() or {})[1]
-  -- -- print(diag_line)
-  -- -- print(vim.inspect(tree))
-  -- local root = tree:root()
-  -- local highlighter = vim.treesitter.highlighter.new(parser)
-  -- highlighter:put(buffer_id, root)
+  vim.api.nvim_buf_clear_namespace(buffer_id, ns, 0, -1)
+  vim.api.nvim_buf_set_extmark(buffer_id, ns, 0, math.max(diag.col - offset, 0), {
+    end_col = math.max(diag.end_col - offset, 0),
+    hl_group = severity_highlight[diag.severity],
+  })
 
-  local severity_highlight = {
-    [1] = 'DiagnosticUnderlineError',
-    [2] = 'DiagnosticUnderlineWarn',
-    [3] = 'DiagnosticUnderlineInfo',
-    [4] = 'DiagnosticUnderlineHint',
-  }
-  vim.api.nvim_buf_add_highlight(buffer_id, -1, severity_highlight[diag.severity], 0,
-    diag.col - offset, diag.end_col - offset)
-
-  -- vim.api.nvim_set_option_value('modifiable', false, { buf = buffer_id })
   vim.api.nvim_set_current_win(current_window)
 end
 
 function M.nextDiagnostic()
-  openDiagnosticInSplit(vim.diagnostic.get_next())
+  openDiagnosticInSplit(vim.diagnostic.jump({ count = 1, float = false }))
 end
 
 function M.prevDiagnostic()
-  openDiagnosticInSplit(vim.diagnostic.get_prev())
+  openDiagnosticInSplit(vim.diagnostic.jump({ count = -1, float = false }))
+end
+
+function M.setup(opts)
+  config = vim.tbl_extend('force', config, opts or {})
 end
 
 return M
