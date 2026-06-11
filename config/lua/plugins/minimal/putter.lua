@@ -8,11 +8,13 @@ return {
   dir = vim.fn.stdpath('config') .. '/lua/myplugins/putter.nvim',
 
   config = function()
-    vim.keymap.set({ 'n', 'x', }, 'gp', require('putter').putLinewiseAfter)
-    vim.keymap.set({ 'n', 'x', }, 'gP', require('putter').putLinewiseBefore)
+    require('putter').setup()
 
-    vim.keymap.set({ 'n', 'x', }, 'p', require('putter').putCharwiseAfter)
-    vim.keymap.set({ 'n', 'x', }, 'P', require('putter').putCharwiseBefore)
+    vim.keymap.set({ 'n', 'x' }, 'gp', require('putter').putLinewiseAfter)
+    vim.keymap.set({ 'n', 'x' }, 'gP', require('putter').putLinewiseBefore)
+
+    vim.keymap.set({ 'n', 'x' }, 'p', require('putter').putCharwiseAfter)
+    vim.keymap.set({ 'n', 'x' }, 'P', require('putter').putCharwiseBefore)
 
     -- vim.keymap.set({ 'n', 'x', }, 'p', require('putter').putWordwise())
     -- vim.keymap.set({ 'n', 'x', }, 'gp', require('putter').putCharwisePrefix('p'))
