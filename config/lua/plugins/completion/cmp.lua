@@ -19,59 +19,59 @@ return {
 
   init = function()
     -- hrsh7th/nvim-cmp
-    vim.api.nvim_create_augroup('cmp', { clear = true, })
+    vim.api.nvim_create_augroup('cmp', { clear = true })
     vim.api.nvim_create_autocmd('ColorScheme', {
       group = 'cmp',
       pattern = '*',
       callback = function()
-        vim.api.nvim_set_hl(0, 'PmenuSel',                 { fg = 'NONE', bg = '#323f5c', })
-        vim.api.nvim_set_hl(0, 'Pmenu',                    { fg = '#e4e8f2', bg = '#1e273b', })
+        vim.api.nvim_set_hl(0, 'PmenuSel', { fg = 'NONE', bg = '#323f5c' })
+        vim.api.nvim_set_hl(0, 'Pmenu', { fg = '#e4e8f2', bg = '#1e273b' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKind',              { fg = '#e4e8f2', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemAbbr',              { fg = '#e4e8f2', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemAbbrDeprecated',    { fg = '#00ffa2', bg = 'NONE', strikethrough = true, })
-        vim.api.nvim_set_hl(0, 'CmpItemAbbrMatch',         { fg = '#00ffa2', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemAbbrMatchFuzzy',    { fg = '#00ffa2', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemMenu',              { fg = '#e4e8f2', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKind', { fg = '#e4e8f2', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemAbbr', { fg = '#e4e8f2', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemAbbrDeprecated', { fg = '#00ffa2', bg = 'NONE', strikethrough = true })
+        vim.api.nvim_set_hl(0, 'CmpItemAbbrMatch', { fg = '#00ffa2', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemAbbrMatchFuzzy', { fg = '#00ffa2', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemMenu', { fg = '#e4e8f2', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindField',         { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindProperty',      { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindEvent',         { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindField', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindProperty', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindEvent', { fg = 'NONE', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindText',          { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindEnum',          { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindKeyword',       { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindText', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindEnum', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindKeyword', { fg = 'NONE', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindConstant',      { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindConstructor',   { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindReference',     { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindConstant', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindConstructor', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindReference', { fg = 'NONE', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindFunction',      { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindStruct',        { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindClass',         { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindModule',        { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindOperator',      { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindFunction', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindStruct', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindClass', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindModule', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindOperator', { fg = 'NONE', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindVariable',      { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindFile',          { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindVariable', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindFile', { fg = 'NONE', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindUnit',          { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindSnippet',       { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindFolder',        { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindUnit', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindSnippet', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindFolder', { fg = 'NONE', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindMethod',        { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindValue',         { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindEnumMember',    { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindMethod', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindValue', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindEnumMember', { fg = 'NONE', bg = 'NONE' })
 
-        vim.api.nvim_set_hl(0, 'CmpItemKindInterface',     { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindColor',         { fg = 'NONE', bg = 'NONE', })
-        vim.api.nvim_set_hl(0, 'CmpItemKindTypeParameter', { fg = 'NONE', bg = 'NONE', })
+        vim.api.nvim_set_hl(0, 'CmpItemKindInterface', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindColor', { fg = 'NONE', bg = 'NONE' })
+        vim.api.nvim_set_hl(0, 'CmpItemKindTypeParameter', { fg = 'NONE', bg = 'NONE' })
       end,
     })
   end,
 
   config = function()
-    local cmp = require 'cmp'
+    local cmp = require('cmp')
 
     local has_words_before = function()
       unpack = unpack or table.unpack
@@ -89,19 +89,18 @@ return {
       },
 
       window = {
-        completion = {
-        },
+        completion = {},
         documentation = {
           winhighlight = 'Normal:Pmenu,FloatBorder:Pmenu,CursorLine:PmenuSel,Search:None',
         },
       },
 
       mapping = {
-      -- ['<C-Space>'] = cmp.mapping.complete(),
-      -- ['<C-e>'] = cmp.mapping.abort(),
+        -- ['<C-Space>'] = cmp.mapping.complete(),
+        -- ['<C-e>'] = cmp.mapping.abort(),
         ['<S-Up>'] = cmp.mapping.scroll_docs(-4),
         ['<S-Down>'] = cmp.mapping.scroll_docs(4),
-        ['<CR>'] = cmp.mapping.confirm({ select = true, }),
+        ['<CR>'] = cmp.mapping.confirm({ select = true }),
         ['<Tab>'] = cmp.mapping(function(fallback)
           if cmp.visible() then
             cmp.select_next_item()
@@ -114,7 +113,7 @@ return {
           else
             fallback()
           end
-        end, { 'i', 's', }),
+        end, { 'i', 's' }),
         ['<S-Tab>'] = cmp.mapping(function(fallback)
           if cmp.visible() then
             cmp.select_prev_item()
@@ -123,7 +122,7 @@ return {
           else
             fallback()
           end
-        end, { 'i', 's', }),
+        end, { 'i', 's' }),
       },
 
       formatting = {
@@ -153,7 +152,7 @@ return {
       },
 
       sources = cmp.config.sources({
-        { name = 'nvim_lsp', },
+        { name = 'nvim_lsp' },
         {
           name = 'luasnip',
           -- prevent nvim-cmp from triggering snippets when the cursor is inside a string
@@ -163,24 +162,24 @@ return {
           end,
         },
       }, {
-        { name = 'buffer', },
+        { name = 'buffer' },
       }),
     })
 
     -- Set configuration for specific filetype.
     cmp.setup.filetype('gitcommit', {
       sources = cmp.config.sources({
-        { name = 'git', }, -- You can specify the `git` source if [you were installed it](https://github.com/petertriho/cmp-git).
+        { name = 'git' }, -- You can specify the `git` source if [you were installed it](https://github.com/petertriho/cmp-git).
       }, {
-        { name = 'buffer', },
+        { name = 'buffer' },
       }),
     })
 
     -- Use buffer source for `/` and `?` (if you enabled `native_menu`, this won't work anymore).
-    cmp.setup.cmdline({ '/', '?', }, {
+    cmp.setup.cmdline({ '/', '?' }, {
       mapping = cmp.mapping.preset.cmdline(),
       sources = {
-        { name = 'buffer', },
+        { name = 'buffer' },
       },
     })
 
@@ -188,15 +187,19 @@ return {
     cmp.setup.cmdline(':', {
       mapping = cmp.mapping.preset.cmdline(),
       sources = cmp.config.sources({
-        { name = 'path', },
+        { name = 'path' },
       }, {
-        { name = 'cmdline', },
+        { name = 'cmdline' },
       }),
     })
 
-    vim.keymap.set({ 'i', 's', }, '<C-Tab>',   function() luasnip.jump(1) end,  { silent = true, })
-    vim.keymap.set({ 'i', 's', }, '<C-S-Tab>', function() luasnip.jump(-1) end, { silent = true, })
+    vim.keymap.set({ 'i', 's' }, '<C-Tab>', function()
+      luasnip.jump(1)
+    end, { silent = true })
+    vim.keymap.set({ 'i', 's' }, '<C-S-Tab>', function()
+      luasnip.jump(-1)
+    end, { silent = true })
 
-    require('luasnip.loaders.from_vscode').lazy_load({ paths = '~/.config/nvim/snippets', })
+    require('luasnip.loaders.from_vscode').lazy_load({ paths = '~/.config/nvim/snippets' })
   end,
 }
