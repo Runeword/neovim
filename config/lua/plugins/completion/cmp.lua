@@ -132,7 +132,6 @@ return {
             buffer = 'buff',
             nvim_lsp = 'lsp',
             luasnip = 'snip',
-            codeium = 'codeium',
             nvim_lua = 'lua',
           })[entry.source.name]
 
@@ -155,7 +154,6 @@ return {
 
       sources = cmp.config.sources({
         { name = 'nvim_lsp', },
-        { name = 'codeium', },
         {
           name = 'luasnip',
           -- prevent nvim-cmp from triggering snippets when the cursor is inside a string
