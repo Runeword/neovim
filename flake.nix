@@ -122,12 +122,6 @@
             rev = "dd8ae2ca26a5cfa17fb598864eacbe2df63938f3";
             hash = "sha256-ApsyPsCECN6V0dRL9BCQZBgktyGDxpHu2aACujJ3Wus=";
           };
-          gitgraph-nvim = pkgs.fetchFromGitHub {
-            owner = "isakbm";
-            repo = "gitgraph.nvim";
-            rev = "01e466b32c346a165135dd47d42f1244eca06572";
-            hash = "sha256-d55IRrOhK5tSLo2boSuMhDbkerqij5AHgNDkwtGadyI=";
-          };
         };
 
         # All active plugins installed via Nix. The wrapper points lazy.nvim's
@@ -224,11 +218,8 @@
           ln -s ${custom-plugins.yank-assassin}      $out/YankAssassin.vim
 
           # ---- currently disabled (enabled = false) but kept ready in Nix
-          # so re-enabling is a one-line spec toggle. Excludes intentionally
-          # dead alternatives: mason*, coq_nvim, codeium.{vim,nvim}, gp.nvim.
+          # so re-enabling is a one-line spec toggle.
           # Excludes anuvyklack/hydra.nvim (archived; collides with nvimtools fork).
-          ln -s ${pkgs.vimPlugins.ssr-nvim}                 $out/ssr.nvim
-          ln -s ${pkgs.vimPlugins.grug-far-nvim}            $out/grug-far.nvim
           ln -s ${pkgs.vimPlugins.treesj}                   $out/treesj
           ln -s ${pkgs.vimPlugins.vim-table-mode}           $out/vim-table-mode
           ln -s ${custom-plugins.ts-node-action}            $out/ts-node-action
@@ -258,7 +249,6 @@
           ln -s ${pkgs.vimPlugins.nvim-lightbulb}           $out/nvim-lightbulb
           ln -s ${custom-plugins.local-highlight-nvim}      $out/local-highlight.nvim
           ln -s ${pkgs.vimPlugins.virt-column-nvim}         $out/virt-column.nvim
-          ln -s ${custom-plugins.gitgraph-nvim}             $out/gitgraph.nvim
         '';
 
         wrapper = with pkgs; ''
