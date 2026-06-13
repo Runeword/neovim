@@ -86,6 +86,9 @@ local function apply()
   vim.api.nvim_set_hl(0, 'DiagnosticVirtualTextHint', { bg = 'NONE', fg = '#adb5bd', bold = false, italic = true })
   vim.api.nvim_set_hl(0, 'DiagnosticUnderlineHint', { bg = 'NONE', undercurl = true, sp = '#adb5bd' })
   vim.api.nvim_set_hl(0, 'DiagnosticUnnecessary', { bg = 'NONE', undercurl = true, sp = '#adb5bd' })
+
+  vim.api.nvim_set_hl(0, 'MiniIndentscopeSymbol', { bg = 'none', fg = '#222b66' })
+  vim.api.nvim_set_hl(0, 'MiniIndentscopeSymbolOff', { bg = 'none', fg = '#222b66' })
 end
 
 vim.api.nvim_create_augroup('colors', { clear = true })
