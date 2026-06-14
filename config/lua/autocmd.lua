@@ -104,27 +104,15 @@ vim.api.nvim_create_augroup('quickfix', { clear = true })
 vim.api.nvim_create_autocmd('FileType', {
   group = 'quickfix',
   pattern = 'qf',
-  command = 'set nobuflisted',
-  desc = 'Exclude quickfix buffer from the buffer list',
-})
-vim.api.nvim_create_autocmd('FileType', {
-  group = 'quickfix',
-  pattern = 'qf',
   callback = function(args)
+    vim.bo[args.buf].buflisted = false
     local lines = vim.api.nvim_buf_line_count(args.buf)
     vim.cmd(math.max(math.min(lines, 10), 3) .. 'wincmd _')
-  end,
-  desc = 'Automatically fitting a quickfix window to 10 lines max and 3 lines min height',
-})
-vim.api.nvim_create_autocmd('FileType', {
-  group = 'quickfix',
-  pattern = 'qf',
-  callback = function()
     vim.schedule(function()
       vim.cmd('cfirst')
     end)
   end,
-  desc = 'Automatically open the first item in the quickfix window',
+  desc = 'Quickfix: hide from buffer list, fit to 3-10 lines, jump to first item',
 })
 
 vim.api.nvim_create_augroup('lsp_keymaps', { clear = true })
