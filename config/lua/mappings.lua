@@ -6,8 +6,8 @@ vim.keymap.set('n', '<Enter>', '<Nop>')
 vim.keymap.set('n', '<Space>', '<Nop>')
 vim.keymap.set('n', '<C-n>', '<Nop>')
 vim.keymap.set('n', '<C-p>', '<Nop>')
-vim.keymap.set('', 'Q', '<Nop>')
-vim.keymap.set('', 'q', '<Nop>')
+vim.keymap.set('n', 'Q', '<Nop>')
+vim.keymap.set('n', 'q', '<Nop>')
 
 vim.keymap.set('n', '<Leader>hd', '<cmd>checkhealth vim.deprecated<CR>')
 
@@ -103,11 +103,23 @@ vim.keymap.set({ 'o' }, '>', 'i>')
 -- vim.keymap.set('x', 'p', '"_dP')
 vim.keymap.set({ 'n', 'v' }, 'd', '"_d')
 vim.keymap.set('n', 'D', '"_D')
-vim.keymap.set('n', 'dd', '"_dd^')
+vim.keymap.set('n', 'dd', function()
+  local count = vim.v.count1
+  vim.cmd('normal! "_' .. count .. 'dd')
+  if vim.api.nvim_get_current_line():match('%S') then
+    vim.cmd('normal! ^')
+  end
+end)
 vim.keymap.set({ 'n', 'v' }, 'x', '"_x')
 vim.keymap.set({ 'n', 'v' }, 'm', 'd')
 vim.keymap.set('n', 'M', 'D')
-vim.keymap.set('n', 'mm', 'dd^')
+vim.keymap.set('n', 'mm', function()
+  local count = vim.v.count1
+  vim.cmd('normal! ' .. count .. 'dd')
+  if vim.api.nvim_get_current_line():match('%S') then
+    vim.cmd('normal! ^')
+  end
+end)
 vim.keymap.set('x', 'v', 'V')
 vim.keymap.set('n', 'V', require('functions').visualSelectToEndOfline)
 
