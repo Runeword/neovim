@@ -67,7 +67,6 @@ return {
       local default_opts = {
         capabilities = cmp_exists and cmp_nvim_lsp.default_capabilities() or {}, -- hrsh7th/nvim-cmp
         on_attach = on_attach_server(true),
-        flags = { debounce_text_changes = 0 },
       }
       return vim.tbl_deep_extend('force', default_opts, override_opts or {})
     end
