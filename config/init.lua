@@ -1,6 +1,5 @@
 local vim = vim
 
-require('compat')
 require('autocmd')
 require('options')
 require('filetype')
