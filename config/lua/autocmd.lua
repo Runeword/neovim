@@ -86,10 +86,13 @@ vim.api.nvim_create_autocmd('FileType', {
 })
 
 vim.api.nvim_create_augroup('tmux', { clear = true })
-vim.api.nvim_create_autocmd('BufWritePost', {
+vim.api.nvim_create_autocmd('BufLeave', {
   group = 'tmux',
-  pattern = '~/.config/tmux/tmux.conf',
-  command = 'silent! !tmux source-file ~/.config/tmux/.tmux.conf',
+  pattern = 'tmux.conf',
+  callback = function(args)
+    vim.system({ 'tmux', 'source-file', vim.api.nvim_buf_get_name(args.buf) })
+  end,
+  desc = 'Reload tmux config on leaving the buffer',
 })
 
 vim.api.nvim_create_augroup('disableAutoComment', { clear = true })
