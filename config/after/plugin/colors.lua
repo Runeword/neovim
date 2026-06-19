@@ -89,6 +89,14 @@ local function apply()
 
   vim.api.nvim_set_hl(0, 'MiniIndentscopeSymbol', { bg = 'none', fg = '#222b66' })
   vim.api.nvim_set_hl(0, 'MiniIndentscopeSymbolOff', { bg = 'none', fg = '#222b66' })
+
+  -- Trouble's window bg links to NormalFloat (solid #1e2633). Link it to the
+  -- transparent Normal instead. This must be a link, not bg = 'none': Neovim
+  -- treats an all-none highlight as an empty definition, so Trouble's own
+  -- `default = true` link (set when it lazy-loads after this runs) would
+  -- overwrite it. A real link survives that, so the window stays transparent.
+  vim.api.nvim_set_hl(0, 'TroubleNormal', { link = 'Normal' })
+  vim.api.nvim_set_hl(0, 'TroubleNormalNC', { link = 'Normal' })
 end
 
 vim.api.nvim_create_augroup('colors', { clear = true })
