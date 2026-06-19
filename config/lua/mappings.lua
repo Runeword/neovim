@@ -136,10 +136,30 @@ vim.keymap.set('i', '<C-u>', '<C-o>S')
 vim.keymap.set({ 'x', 'n' }, 'k', 'gk')
 vim.keymap.set({ 'x', 'n' }, 'j', 'gj')
 
-vim.keymap.set({ 'x', 'n' }, '<C-k>', function()
+vim.keymap.set('n', '<C-k>', function()
+  if is_quickfix_open() then
+    local success, _ = pcall(vim.cmd, 'cprevious')
+    if not success then
+      vim.cmd('clast')
+    end
+  else
+    require('functions').move_to_non_empty_line(-4)
+  end
+end, { noremap = true, desc = 'Quickfix previous item, else jump up 4 non-empty lines' })
+vim.keymap.set('n', '<C-j>', function()
+  if is_quickfix_open() then
+    local success, _ = pcall(vim.cmd, 'cnext')
+    if not success then
+      vim.cmd('cfirst')
+    end
+  else
+    require('functions').move_to_non_empty_line(4)
+  end
+end, { noremap = true, desc = 'Quickfix next item, else jump down 4 non-empty lines' })
+vim.keymap.set('x', '<C-k>', function()
   require('functions').move_to_non_empty_line(-4)
 end, { noremap = true })
-vim.keymap.set({ 'x', 'n' }, '<C-j>', function()
+vim.keymap.set('x', '<C-j>', function()
   require('functions').move_to_non_empty_line(4)
 end, { noremap = true })
 vim.keymap.set('n', '0', 'g0')
