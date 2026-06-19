@@ -208,6 +208,9 @@ function M.cancel()
     vim.api.nvim_buf_delete(bff, { force = true, unload = false })
   end
 
+  -- Close the quickfix list if it is open
+  vim.cmd('cclose')
+
   -- Move cursor to the beginning of the line
   vim.api.nvim_feedkeys(string.format('%c%s', 27, 'g^'), 'n', true) -- <Esc>g^
 end
