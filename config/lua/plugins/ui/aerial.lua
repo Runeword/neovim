@@ -10,11 +10,17 @@ return {
     'nvim-tree/nvim-web-devicons',
   },
 
+  cmd = { 'AerialToggle', 'AerialOpen', 'AerialNext', 'AerialPrev' },
+
+  keys = {
+    { '<Leader>u', '<cmd>AerialToggle!<CR>', desc = 'aerial: toggle' },
+  },
+
   config = function()
     require('aerial').setup({
       open_automatic = false,
 
-      backends = { 'treesitter', },
+      backends = { 'treesitter' },
 
       lazy_load = false,
 
@@ -30,20 +36,24 @@ return {
         -- end, { buffer = bufnr, })
 
         vim.keymap.set('n', '<Down>', function()
-          if not require('aerial').is_open() then require('aerial').toggle({ focus = false, }) end
+          if not require('aerial').is_open() then
+            require('aerial').toggle({ focus = false })
+          end
           vim.cmd('AerialNext')
-        end, { buffer = bufnr, })
+        end, { buffer = bufnr })
 
         vim.keymap.set('n', '<Up>', function()
-          if not require('aerial').is_open() then require('aerial').toggle({ focus = false, }) end
+          if not require('aerial').is_open() then
+            require('aerial').toggle({ focus = false })
+          end
           vim.cmd('AerialPrev')
-        end, { buffer = bufnr, })
+        end, { buffer = bufnr })
 
-        vim.keymap.set('n', '<Leader>u', '<cmd>AerialToggle!<CR>', { buffer = bufnr, })
+        vim.keymap.set('n', '<Leader>u', '<cmd>AerialToggle!<CR>', { buffer = bufnr })
       end,
 
       layout = {
-        max_width = { 40, 0.2, },
+        max_width = { 40, 0.2 },
         width = nil,
         min_width = 10,
         win_opts = {},
