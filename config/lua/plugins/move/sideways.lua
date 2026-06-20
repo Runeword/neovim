@@ -4,6 +4,8 @@ return {
   'AndrewRadev/sideways.vim',
   enabled = true,
 
+  event = 'VeryLazy',
+
   config = function()
     vim.keymap.set('n', '<Left>', '<cmd>SidewaysJumpLeft<CR>')
     vim.keymap.set('n', '<Right>', '<cmd>SidewaysJumpRight<CR>')
