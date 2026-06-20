@@ -6,6 +6,7 @@ return {
   {
     'tommcdo/vim-exchange',
     enabled = true,
+    event = 'VeryLazy',
   },
   -- {
   --   'psjay/buffer-closer.nvim',
