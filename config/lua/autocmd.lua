@@ -65,13 +65,24 @@ vim.api.nvim_create_augroup('view', { clear = true })
 vim.api.nvim_create_autocmd({ 'BufWinLeave' }, {
   group = 'view',
   pattern = '*.*',
-  command = 'mkview',
+  callback = function(args)
+    -- Only real file buffers; skip terminals, quickfix, help, plugin windows, etc.
+    if vim.bo[args.buf].buftype ~= '' then
+      return
+    end
+    vim.cmd('mkview')
+  end,
   desc = 'Save cursor position and folds when leaving a buffer',
 })
 vim.api.nvim_create_autocmd({ 'BufWinEnter' }, {
   group = 'view',
   pattern = '*.*',
-  command = 'silent! loadview',
+  callback = function(args)
+    if vim.bo[args.buf].buftype ~= '' then
+      return
+    end
+    vim.cmd('silent! loadview')
+  end,
   desc = 'Restore cursor position and folds when entering a buffer',
 })
 
@@ -133,16 +144,26 @@ vim.api.nvim_create_autocmd('LspAttach', {
 })
 
 local searchcount_ns = vim.api.nvim_create_namespace('searchcount')
+local searchcount_active = false
 vim.api.nvim_create_augroup('searchcount', { clear = true })
 vim.api.nvim_create_autocmd('CursorMoved', {
   group = 'searchcount',
   callback = function()
-    vim.api.nvim_buf_clear_namespace(0, searchcount_ns, 0, -1)
+    -- Cheap path when not searching: only clear once, on the hlsearch 1->0 edge,
+    -- so a stale count isn't left behind after :nohlsearch.
     if vim.v.hlsearch == 0 then
+      if searchcount_active then
+        vim.api.nvim_buf_clear_namespace(0, searchcount_ns, 0, -1)
+        searchcount_active = false
+      end
       return
     end
-    local ok, result = pcall(vim.fn.searchcount)
+    vim.api.nvim_buf_clear_namespace(0, searchcount_ns, 0, -1)
+    -- Bound the search: cap the count and time-limit it so huge files/match
+    -- sets don't add cursor-movement latency.
+    local ok, result = pcall(vim.fn.searchcount, { maxcount = 999, timeout = 100 })
     if not ok or result.total == 0 then
+      searchcount_active = false
       return
     end
     local line = vim.api.nvim_get_current_line()
@@ -150,6 +171,7 @@ vim.api.nvim_create_autocmd('CursorMoved', {
       virt_text = { { (' %d/%d'):format(result.current, result.total), 'CurSearch' } },
       virt_text_pos = 'inline',
     })
+    searchcount_active = true
   end,
 })
 
