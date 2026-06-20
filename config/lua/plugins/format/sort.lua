@@ -1,5 +1,8 @@
 return {
   'sQVe/sort.nvim',
+
+  event = 'VeryLazy',
+
   config = function()
     require('sort').setup({
       -- Delimiter priority order.
@@ -9,7 +12,7 @@ return {
         ';',
         ':',
         's', -- Space.
-        't' -- Tab.
+        't', -- Tab.
       },
 
       -- Natural sorting (default: true).
@@ -27,7 +30,7 @@ return {
       mappings = {
         operator = 'gs',
         textobject = false,
-        motion = false
+        motion = false,
       },
     })
   end,
