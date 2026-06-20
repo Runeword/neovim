@@ -3,6 +3,8 @@ local vim = vim
 return {
   'monaqa/dial.nvim',
 
+  event = 'VeryLazy',
+
   config = function()
     vim.keymap.set('n', '<C-a>', require('dial.map').inc_normal())
     vim.keymap.set('n', '<C-x>', require('dial.map').dec_normal())
@@ -21,11 +23,11 @@ return {
         augend.constant.alias.bool,
 
         augend.constant.new({
-          elements = { 'let', 'const', },
+          elements = { 'let', 'const' },
         }),
 
         augend.constant.new({
-          elements = { '&&', '||', },
+          elements = { '&&', '||' },
           word = false,
           cyclic = true,
         }),
