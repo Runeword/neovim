@@ -93,6 +93,12 @@ local function apply()
   vim.api.nvim_set_hl(0, 'TroubleNormal', { link = 'Normal' })
   vim.api.nvim_set_hl(0, 'TroubleNormalNC', { link = 'Normal' })
   vim.api.nvim_set_hl(0, 'TroubleCursorLine', { bg = '#1e2633' })
+
+  vim.api.nvim_set_hl(0, 'NotifyERRORBorder', { link = 'FloatBorder' })
+  vim.api.nvim_set_hl(0, 'NotifyWARNBorder', { link = 'FloatBorder' })
+  vim.api.nvim_set_hl(0, 'NotifyINFOBorder', { link = 'FloatBorder' })
+  vim.api.nvim_set_hl(0, 'NotifyDEBUGBorder', { link = 'FloatBorder' })
+  vim.api.nvim_set_hl(0, 'NotifyTRACEBorder', { link = 'FloatBorder' })
 end
 
 vim.api.nvim_create_augroup('colors', { clear = true })
