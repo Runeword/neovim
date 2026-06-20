@@ -4,6 +4,8 @@ return {
   'echasnovski/mini.ai',
   version = false,
 
+  event = 'VeryLazy',
+
   config = function()
     local gen_spec = require('mini.ai').gen_spec
 
