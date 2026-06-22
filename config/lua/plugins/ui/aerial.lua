@@ -10,12 +10,6 @@ return {
     'nvim-tree/nvim-web-devicons',
   },
 
-  cmd = { 'AerialToggle', 'AerialOpen', 'AerialNext', 'AerialPrev' },
-
-  keys = {
-    { '<Leader>u', '<cmd>AerialToggle!<CR>', desc = 'aerial: toggle' },
-  },
-
   config = function()
     require('aerial').setup({
       open_automatic = false,
