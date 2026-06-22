@@ -54,14 +54,19 @@ local lazy_opts = {
 -- name matches a subdir there. `fallback = true` lets plugins not in
 -- that dir continue to clone normally.
 if vim.env.NVIM_NIX_PLUGINS_DIR then
-  -- Build the pattern list from what's actually present in NVIM_NIX_PLUGINS_DIR.
-  -- A blanket pattern like { '.' } also matches myplugins/* specs that use
-  -- `dir = stdpath('config') .. '/lua/myplugins/<name>'`, and lazy.nvim's dev
-  -- resolution would then overwrite their `dir` with NVIM_NIX_PLUGINS_DIR/<name>
-  -- (which doesn't exist), silently disabling them.
+  -- lazy.nvim flips a spec to `dev` when one of `dev.patterns` is found in the
+  -- plugin's GitHub URL via `url:find(pattern, 1, true)` (lazy/core/meta.lua) —
+  -- a PLAIN-TEXT substring match, not a Lua pattern. So each entry must be a
+  -- literal substring of the URL: the bare repo name (e.g. 'aerial.nvim', which
+  -- appears in 'https://github.com/stevearc/aerial.nvim.git') is exactly right.
+  -- Lua-pattern anchors ('^'/'$') or vim.pesc escaping ('%.') would be matched
+  -- literally, never hit, and every plugin would silently fall back to cloning.
+  -- Once dev=true, lazy uses `<path>/<plugin.name>`; fallback=true clones any
+  -- spec whose name has no subdir here. myplugins/* specs use an explicit `dir`,
+  -- so they skip dev resolution entirely and are unaffected.
   local patterns = {}
   for name in vim.fs.dir(vim.env.NVIM_NIX_PLUGINS_DIR) do
-    table.insert(patterns, '^' .. vim.pesc(name) .. '$')
+    table.insert(patterns, name)
   end
   lazy_opts.dev = {
     path = vim.env.NVIM_NIX_PLUGINS_DIR,
