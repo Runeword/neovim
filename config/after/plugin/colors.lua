@@ -48,6 +48,13 @@ local function apply()
   vim.api.nvim_set_hl(0, 'FoldColumn', { link = 'Normal' })
   vim.api.nvim_set_hl(0, 'Folded', { link = 'Normal' })
 
+  -- gitsigns word_diff intra-line regions. Default links to TermCursor
+  -- (reverse video, identical for all three); tint the backgrounds instead so
+  -- the changed characters stay readable and add/change/delete are distinct.
+  vim.api.nvim_set_hl(0, 'GitSignsAddInline', { bg = '#21503a' })
+  vim.api.nvim_set_hl(0, 'GitSignsChangeInline', { bg = '#1d4a63' })
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteInline', { bg = '#5e2a40' })
+
   vim.api.nvim_set_hl(0, 'NonText', { bg = 'none', fg = '#384354' })
   vim.api.nvim_set_hl(0, 'Whitespace', { bg = 'none', fg = '#384354' })
 
