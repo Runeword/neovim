@@ -3,23 +3,36 @@
 
   # Enable binary cache from nix-community to download pre-built packages,
   # such as neovim-nightly-overlay, instead of building them locally.
-  nixConfig.extra-substituters = [
-    "https://nix-community.cachix.org"
-  ];
-  nixConfig.extra-trusted-public-keys = [
-    "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
-  ];
+  nixConfig = {
+    extra-substituters = [
+      "https://nix-community.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+    ];
+  };
 
-  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-  # Required to creates outputs for all supported systems
-  inputs.flake-utils.url = "github:numtide/flake-utils";
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    # Required to creates outputs for all supported systems
+    flake-utils.url = "github:numtide/flake-utils";
 
-  inputs.neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay";
-  inputs.neovim-nightly-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    neovim-nightly-overlay = {
+      url = "github:nix-community/neovim-nightly-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # Pre-commit hooks (format Lua, format/lint Nix, gitleaks, auto-commit).
+    # The dev shell renders them into the committed lefthook-generated.yml
+    # and puts the tools they call on PATH.
+    lefthook = {
+      url = "github:Runeword/lefthook";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
       ...
@@ -323,21 +336,44 @@
         };
       in
       {
-        # Bundled mode
-        apps.default.type = "app";
-        apps.default.program = "${neovim}/bin/nvim";
-        packages.default = neovim;
+        apps = {
+          # Bundled mode
+          default = {
+            type = "app";
+            program = "${neovim}/bin/nvim";
+          };
+          # Dev mode
+          dev = {
+            type = "app";
+            program = "${neovim-dev { }}/bin/nvim";
+          };
+        };
 
-        # Dev mode
-        apps.dev.type = "app";
-        apps.dev.program = "${neovim-dev { }}/bin/nvim";
-        packages.dev.default = neovim-dev { };
-        packages.dev.options = neovim-dev;
+        packages = {
+          # Bundled mode
+          default = neovim;
+          # Dev mode
+          dev = {
+            default = neovim-dev { };
+            options = neovim-dev;
+          };
+        };
 
         devShells.default = pkgs.mkShell {
+          # Lefthook pre-commit hooks: entering the shell regenerates
+          # lefthook-generated.yml, installs the git hooks, and provides the
+          # tools they call by bare name (stylua, nixfmt, deadnix, statix, …).
+          inputsFrom = [
+            (inputs.lefthook.lib.${system}.mkShell {
+              lanes = [
+                "lua"
+                "nix"
+              ];
+              gitleaks = true;
+              autoCommit = true;
+            })
+          ];
           buildInputs = [
-            pkgs.stylua
-            pkgs.nixfmt-rfc-style
             (pkgs.writeShellScriptBin "dev" ''
               NVIM_CONFIG_DIR="$PWD/config" nix run .#dev --impure "$@"
             '')
