@@ -25,7 +25,11 @@ Use **dev mode** while iterating on Lua config. Use **bundled mode** (or `nix bu
 - Lua: `stylua` (config at `config/.stylua.toml` + `config/editorconfig` — 2-space indent, single quotes, max line 120, trailing table separator always).
 - Nix: `nixfmt` (nixfmt-rfc-style).
 
-`stylua` and `nixfmt-rfc-style` are in the dev shell. Commits run remote lefthook hooks (`lefthook.yml` → `Runeword/lefthook`) that auto-format Lua and Nix and auto-generate the commit message.
+Both are on the dev-shell `PATH` via the `Runeword/lefthook` flake input, which also renders the pre-commit hooks into `lefthook-generated.yml` (committed; regenerated on shell entry) and installs them. `lefthook.yml` just extends it. Commits auto-format Lua and Nix, lint Nix (`deadnix` + `statix`), and scan for secrets (`gitleaks`).
+
+### `git commit` exits 1 here — that is success
+
+The `auto-commit` hook splits a commit into one commit per staged file (with generated `Update <file>` messages) and then cancels the umbrella commit, so a successful commit reports failure and discards your commit message. Check `git log`, not the exit code. `LEFTHOOK_EXCLUDE=auto-commit git commit -m "…"` makes a single normal commit instead.
 
 ## How the Nix ↔ lazy.nvim bridge works
 
