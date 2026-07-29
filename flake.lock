@@ -39,6 +39,26 @@
         "type": "github"
       }
     },
+    "lefthook": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1785193036,
+        "narHash": "sha256-SRDx8p0EzgGdoJM1QvIgJF/l9P28d9D9t+yEqU2g4HM=",
+        "owner": "Runeword",
+        "repo": "lefthook",
+        "rev": "a459cd7d9b106ef3af99448d35aa2cef2be63e71",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Runeword",
+        "repo": "lefthook",
+        "type": "github"
+      }
+    },
     "neovim-nightly-overlay": {
       "inputs": {
         "flake-parts": "flake-parts",
@@ -96,6 +116,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "lefthook": "lefthook",
         "neovim-nightly-overlay": "neovim-nightly-overlay",
         "nixpkgs": "nixpkgs"
       }
