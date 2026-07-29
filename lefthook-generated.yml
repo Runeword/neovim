@@ -1,0 +1,34 @@
+min_version: 2.1.5
+pre-commit:
+  jobs:
+    - group:
+        jobs:
+          - group:
+              jobs:
+                - glob: '*.lua'
+                  name: format-lua
+                  run: stylua {staged_files}
+                  stage_fixed: true
+              piped: true
+            name: lua
+          - group:
+              jobs:
+                - glob: '*.nix'
+                  name: format-nix
+                  run: nixfmt {staged_files}
+                  stage_fixed: true
+                - glob: '*.nix'
+                  name: lint-nix
+                  run: lint-nix {staged_files}
+              piped: true
+            name: nix
+          - name: security-gitleaks
+            run: gitleaks git --pre-commit --redact --staged --verbose --no-banner --log-level=warn
+        parallel: true
+      name: main
+    - name: auto-commit
+      run: auto-commit
+      skip:
+        - merge
+        - rebase
+  piped: true
