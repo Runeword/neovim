@@ -200,6 +200,7 @@
 
           # ---- move / search ----
           ln -s ${pkgs.vimPlugins.fzf-lua}          $out/fzf-lua
+          ln -s ${pkgs.vimPlugins.harpoon2}         $out/harpoon
           ln -s ${pkgs.vimPlugins.flash-nvim}       $out/flash.nvim
           ln -s ${pkgs.vimPlugins.nvim-spider}      $out/nvim-spider
           ln -s ${pkgs.vimPlugins.vim-matchup}      $out/vim-matchup
