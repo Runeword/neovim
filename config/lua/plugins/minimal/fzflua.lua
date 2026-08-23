@@ -41,6 +41,20 @@ return {
       desc = 'fzf: highlights',
     },
     {
+      '<Leader>o',
+      function()
+        require('fzf-lua').lsp_document_symbols()
+      end,
+      desc = 'fzf: document symbols',
+    },
+    {
+      '<Leader>w',
+      function()
+        require('fzf-lua').lsp_live_workspace_symbols()
+      end,
+      desc = 'fzf: workspace symbols',
+    },
+    {
       '<leader>a',
       mode = { 'n', 'x' },
       function()
