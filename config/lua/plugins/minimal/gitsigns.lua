@@ -11,6 +11,7 @@ return {
 
       signs_staged_enable = true,
       word_diff = true,
+      linehl = true,
       current_line_blame = true,
       current_line_blame_opts = { delay = 200 },
 
@@ -56,12 +57,17 @@ return {
         changedelete = { text = '~' },
       },
 
+      -- Staged signs reuse the unstaged glyphs so the sign shape always encodes
+      -- the change *type*. Staged vs unstaged is distinguished by a dim backdrop
+      -- behind the glyph (the GitSignsStaged* overrides in
+      -- after/plugin/colors.lua), not by gitsigns' default of dimming the glyph
+      -- foreground (fg_factor = 0.5) which those overrides suppress.
       signs_staged = {
-        add = { text = '▒' },
-        change = { text = '░' },
-        delete = { text = '░' },
-        topdelete = { text = '░' },
-        changedelete = { text = '░' },
+        add = { text = '+' },
+        change = { text = '~' },
+        delete = { text = '_' },
+        topdelete = { text = '‾' },
+        changedelete = { text = '~' },
       },
     })
   end,
