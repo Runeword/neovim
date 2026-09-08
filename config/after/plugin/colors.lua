@@ -48,12 +48,39 @@ local function apply()
   vim.api.nvim_set_hl(0, 'FoldColumn', { link = 'Normal' })
   vim.api.nvim_set_hl(0, 'Folded', { link = 'Normal' })
 
-  -- gitsigns word_diff intra-line regions. Default links to TermCursor
-  -- (reverse video, identical for all three); tint the backgrounds instead so
-  -- the changed characters stay readable and add/change/delete are distinct.
-  vim.api.nvim_set_hl(0, 'GitSignsAddInline', { bg = '#21503a' })
-  vim.api.nvim_set_hl(0, 'GitSignsChangeInline', { bg = '#1d4a63' })
-  vim.api.nvim_set_hl(0, 'GitSignsDeleteInline', { bg = '#5e2a40' })
+  local add_inline, change_inline, delete_inline = '#10281d', '#0e242f', '#5e2a40'
+  vim.api.nvim_set_hl(0, 'GitSignsAddInline', { bg = add_inline })
+  vim.api.nvim_set_hl(0, 'GitSignsAddLnInline', { bg = add_inline })
+  vim.api.nvim_set_hl(0, 'GitSignsChangeInline', { bg = change_inline })
+  vim.api.nvim_set_hl(0, 'GitSignsChangeLnInline', { bg = change_inline })
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteInline', { bg = delete_inline })
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteLnInline', { bg = delete_inline })
+
+  vim.api.nvim_set_hl(0, 'GitSignsAddLn', { link = 'Normal' })
+  vim.api.nvim_set_hl(0, 'GitSignsChangeLn', { link = 'Normal' })
+  vim.api.nvim_set_hl(0, 'GitSignsStagedAddLn', { link = 'Normal' })
+  vim.api.nvim_set_hl(0, 'GitSignsStagedChangeLn', { link = 'Normal' })
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteLn', { link = 'Normal' })
+
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLn', { bg = '#3a1420' })
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLnInline', { bg = '#5e2a40' })
+
+  for _, suffix in ipairs({ '', 'Cul' }) do
+    vim.api.nvim_set_hl(0, 'GitSignsChange' .. suffix, { fg = '#1e90ff', bg = 'none' })
+  end
+
+  local staged_sign_bg = '#1e2633'
+  for _, s in ipairs({
+    { 'Add', '#21c7a8' },
+    { 'Change', '#1e90ff' },
+    { 'Delete', '#fc514e' },
+    { 'Topdelete', '#fc514e' },
+    { 'Changedelete', '#1e90ff' },
+  }) do
+    for _, suffix in ipairs({ '', 'Cul' }) do
+      vim.api.nvim_set_hl(0, 'GitSignsStaged' .. s[1] .. suffix, { fg = s[2], bg = staged_sign_bg, bold = false })
+    end
+  end
 
   vim.api.nvim_set_hl(0, 'NonText', { bg = 'none', fg = '#384354' })
   vim.api.nvim_set_hl(0, 'Whitespace', { bg = 'none', fg = '#384354' })
