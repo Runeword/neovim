@@ -225,8 +225,22 @@ local function show_textobject_labels()
   end
 end
 
+-- Each pass is a treesitter parse + capture scan, so running it on every
+-- CursorMoved makes fast motions (held j/k, w, …) pay that cost per step, and
+-- it grows with file size. `on_cursor_move` debounces the pass so a burst of
+-- movement collapses into a single recompute once the cursor settles; very
+-- large buffers skip it entirely.
+local DEBOUNCE_MS = 40
+local MAX_LINES = 20000
+local debounce_timer = vim.uv.new_timer()
+
 local function highlight_treesitter_node()
   api.nvim_buf_clear_namespace(0, namespace_id, 0, -1)
+
+  if api.nvim_buf_line_count(0) > MAX_LINES then
+    api.nvim_buf_clear_namespace(0, label_ns_id, 0, -1)
+    return
+  end
 
   if api.nvim_get_mode().mode ~= 'n' then
     show_textobject_labels()
@@ -250,6 +264,21 @@ local function highlight_treesitter_node()
   show_textobject_labels()
 end
 
+-- schedule_wrap hops back to the main loop so the API calls in
+-- highlight_treesitter_node run in a valid context when the timer fires.
+-- Wrapped once and reused to avoid allocating a closure on every cursor move.
+local scheduled_highlight = vim.schedule_wrap(highlight_treesitter_node)
+
+-- Reusing a single timer means each event just restarts the countdown, so the
+-- recompute only runs once the cursor has been still for DEBOUNCE_MS.
+local function on_cursor_move()
+  if not debounce_timer then
+    return highlight_treesitter_node()
+  end
+  debounce_timer:stop()
+  debounce_timer:start(DEBOUNCE_MS, 0, scheduled_highlight)
+end
+
 function M.setup(opts)
   config = vim.tbl_extend('force', config, opts or {})
 
@@ -258,7 +287,7 @@ function M.setup(opts)
   local group = api.nvim_create_augroup('grasp', { clear = true })
   api.nvim_create_autocmd({ 'CursorMoved', 'ModeChanged' }, {
     group = group,
-    callback = highlight_treesitter_node,
+    callback = on_cursor_move,
   })
   api.nvim_create_autocmd('ColorScheme', {
     group = group,
