@@ -49,35 +49,33 @@ local function apply()
   vim.api.nvim_set_hl(0, 'Folded', { link = 'Normal' })
 
   local add_inline, change_inline, delete_inline = '#10281d', '#0e242f', '#5e2a40'
+  local plus_emph = '#2f8f53'
   vim.api.nvim_set_hl(0, 'GitSignsAddInline', { bg = add_inline })
-  vim.api.nvim_set_hl(0, 'GitSignsAddLnInline', { bg = add_inline })
+  vim.api.nvim_set_hl(0, 'GitSignsAddLnInline', { bg = plus_emph })
   vim.api.nvim_set_hl(0, 'GitSignsChangeInline', { bg = change_inline })
-  vim.api.nvim_set_hl(0, 'GitSignsChangeLnInline', { bg = change_inline })
+  vim.api.nvim_set_hl(0, 'GitSignsChangeLnInline', { bg = plus_emph })
   vim.api.nvim_set_hl(0, 'GitSignsDeleteInline', { bg = delete_inline })
   vim.api.nvim_set_hl(0, 'GitSignsDeleteLnInline', { bg = delete_inline })
 
-  vim.api.nvim_set_hl(0, 'GitSignsAddLn', { link = 'Normal' })
-  vim.api.nvim_set_hl(0, 'GitSignsChangeLn', { link = 'Normal' })
+  vim.api.nvim_set_hl(0, 'GitSignsAddLn', { bg = '#405744' })
+  vim.api.nvim_set_hl(0, 'GitSignsChangeLn', { bg = '#405744' })
   vim.api.nvim_set_hl(0, 'GitSignsStagedAddLn', { link = 'Normal' })
   vim.api.nvim_set_hl(0, 'GitSignsStagedChangeLn', { link = 'Normal' })
   vim.api.nvim_set_hl(0, 'GitSignsDeleteLn', { link = 'Normal' })
 
-  vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLn', { bg = '#3a1420' })
-  vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLnInline', { bg = '#5e2a40' })
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLn', { fg = '#ffffff', bg = '#664046' })
+  vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLnInline', { fg = '#ffffff', bg = '#a84d5f' })
 
-  for _, suffix in ipairs({ '', 'Cul' }) do
-    vim.api.nvim_set_hl(0, 'GitSignsChange' .. suffix, { fg = '#1e90ff', bg = 'none' })
-  end
-
-  local staged_sign_bg = '#1e2633'
+  local unstaged_sign_bg, staged_sign_bg = '#262e3b', '#10141f'
   for _, s in ipairs({
-    { 'Add', '#21c7a8' },
-    { 'Change', '#1e90ff' },
-    { 'Delete', '#fc514e' },
-    { 'Topdelete', '#fc514e' },
-    { 'Changedelete', '#1e90ff' },
+    { 'Add', '#21c7a8', '#3fecca' },
+    { 'Change', '#1e90ff', '#29a8ff' },
+    { 'Delete', '#fc514e', '#ff716e' },
+    { 'Topdelete', '#fc514e', '#ff716e' },
+    { 'Changedelete', '#1e90ff', '#29a8ff' },
   }) do
     for _, suffix in ipairs({ '', 'Cul' }) do
+      vim.api.nvim_set_hl(0, 'GitSigns' .. s[1] .. suffix, { fg = s[3], bg = unstaged_sign_bg, bold = false })
       vim.api.nvim_set_hl(0, 'GitSignsStaged' .. s[1] .. suffix, { fg = s[2], bg = staged_sign_bg, bold = false })
     end
   end
