@@ -10,8 +10,8 @@ return {
     require('gitsigns').setup({
 
       signs_staged_enable = true,
-      word_diff = true,
-      linehl = true,
+      word_diff = false,
+      linehl = false,
       current_line_blame = true,
       current_line_blame_opts = { delay = 200 },
 
