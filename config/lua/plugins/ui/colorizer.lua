@@ -4,7 +4,26 @@ return {
 
   config = function()
     require('colorizer').setup({
-      filetypes = { '*' },
+      filetypes = {
+        'css',
+        'scss',
+        'sass',
+        'less',
+        'stylus',
+        'html',
+        'javascript',
+        'javascriptreact',
+        'typescript',
+        'typescriptreact',
+        'vue',
+        'svelte',
+        'lua',
+        'json',
+        'jsonc',
+        'yaml',
+        'toml',
+        'conf',
+      },
       lazy_load = true,
       user_default_options = {
         mode = 'virtualtext',
