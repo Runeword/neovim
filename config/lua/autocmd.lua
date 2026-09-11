@@ -198,3 +198,26 @@ vim.api.nvim_create_autocmd('BufLeave', {
   end,
   desc = 'Close floating windows safely when leaving a buffer',
 })
+
+-- Large files: skip the expensive per-buffer machinery. Sets a b:big_file flag
+-- (read by the treesitter FileType autocmd to skip parsing) and disables regex
+-- syntax. gitsigns self-limits by line count; colorizer is scoped by filetype.
+vim.api.nvim_create_augroup('big_file', { clear = true })
+vim.api.nvim_create_autocmd('BufReadPre', {
+  group = 'big_file',
+  callback = function(args)
+    local ok, stats = pcall(vim.uv.fs_stat, vim.api.nvim_buf_get_name(args.buf))
+    if not (ok and stats and stats.size > 1024 * 1024) then -- 1 MiB
+      return
+    end
+    vim.b[args.buf].big_file = true
+    -- Deferred so it runs after filetype's syntax load, which would otherwise
+    -- re-enable regex syntax when FileType fires.
+    vim.schedule(function()
+      if vim.api.nvim_buf_is_valid(args.buf) then
+        vim.bo[args.buf].syntax = ''
+      end
+    end)
+  end,
+  desc = 'Flag large files and disable expensive per-buffer features',
+})
