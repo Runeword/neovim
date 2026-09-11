@@ -25,6 +25,19 @@ return {
       group = vim.api.nvim_create_augroup('TreesitterStart', { clear = true }),
       callback = function(args)
         local bufnr = args.buf
+        -- Minified/long-line guard: a file can sit under big_file's byte
+        -- threshold yet be a few pathologically long lines (minified JS/CSS/
+        -- JSON) that still choke the parser. Average line length is an O(1)
+        -- proxy (nvim_buf_get_offset caches offsets) that catches them.
+        if not vim.b[bufnr].big_file then
+          local lines = vim.api.nvim_buf_line_count(bufnr)
+          if lines > 0 and vim.api.nvim_buf_get_offset(bufnr, lines) / lines > 2048 then
+            vim.b[bufnr].big_file = true
+          end
+        end
+        if vim.b[bufnr].big_file then
+          return
+        end
         local lang = vim.treesitter.language.get_lang(vim.bo[bufnr].filetype)
         if lang and pcall(vim.treesitter.start, bufnr, lang) then
           vim.bo[bufnr].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
