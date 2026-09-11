@@ -15,6 +15,16 @@ return {
       current_line_blame = true,
       current_line_blame_opts = { delay = 200 },
 
+      -- In-buffer staging (e.g. <leader>ga) does one synchronous sign repaint,
+      -- but the .git-dir watcher then fires a *second* full clear+repaint
+      -- ~100ms later: its invalidate() resets the "old hunks" to nil, so
+      -- gitsigns' compare_heads no-op short-circuit never triggers and it
+      -- redraws every sign again. That second sweep is the top-to-bottom
+      -- ripple. Disabling the watcher gives a single clean flip (measured:
+      -- 2 repaint passes -> 1). Trade-off: signs no longer auto-update after
+      -- *external* git ops, so we refresh on focus/resume below instead.
+      watch_gitdir = { enable = false },
+
       on_attach = function(buffer)
         vim.keymap.set(
           { 'n', 'x' },
@@ -69,6 +79,17 @@ return {
         topdelete = { text = '‾' },
         changedelete = { text = '~' },
       },
+    })
+
+    -- Compensate for the disabled .git-dir watcher: refresh signs when
+    -- returning to Neovim (e.g. after staging/committing in external lazygit).
+    vim.api.nvim_create_autocmd({ 'FocusGained', 'VimResume' }, {
+      group = vim.api.nvim_create_augroup('gitsigns_refresh_on_focus', { clear = true }),
+      callback = function()
+        pcall(function()
+          require('gitsigns').refresh()
+        end)
+      end,
     })
   end,
 }
