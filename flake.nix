@@ -68,6 +68,21 @@
           ln -s ${pkgs.vimPlugins.nvim-treesitter-textobjects}/queries $out/queries
         '';
 
+        # nvim-treesitter's `withAllGrammars` for the 0.10 "main" rewrite ships an
+        # EMPTY parser/ dir (the rewrite reworked the parser layout), so grammars
+        # never reach Neovim's runtimepath and core treesitter silently falls back
+        # to regex :syntax for every non-builtin language. Rebuild it ourselves:
+        # symlinkJoin the base plugin with all grammar plugins — each ships exactly
+        # parser/<lang>.so, so merging them populates $out/parser and Neovim's
+        # vim.treesitter finds every grammar on rtp. Queries still come from base.
+        nvim-treesitter-with-grammars = pkgs.symlinkJoin {
+          name = "vimplugin-nvim-treesitter-with-all-grammars";
+          paths = [
+            pkgs.vimPlugins.nvim-treesitter
+          ]
+          ++ builtins.attrValues pkgs.vimPlugins.nvim-treesitter.grammarPlugins;
+        };
+
         # Plugins not in nixpkgs — fetched directly from GitHub. We use
         # fetchFromGitHub instead of vimUtils.buildVimPlugin because the
         # latter runs a require()-check on every Lua module at build time,
@@ -154,7 +169,7 @@
           # which the new nvim-treesitter rewrite removed. Its query files
           # are made available via $NVIM_TS_TEXTOBJECTS_QUERIES; mini.ai
           # consumes them via gen_spec.treesitter().
-          ln -s ${pkgs.vimPlugins.nvim-treesitter.withAllGrammars} $out/nvim-treesitter
+          ln -s ${nvim-treesitter-with-grammars} $out/nvim-treesitter
 
           # ---- LSP / completion ----
           ln -s ${pkgs.vimPlugins.nvim-lspconfig} $out/nvim-lspconfig
