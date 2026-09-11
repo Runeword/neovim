@@ -66,7 +66,7 @@ local function apply()
   vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLn', { fg = '#ffffff', bg = '#664046' })
   vim.api.nvim_set_hl(0, 'GitSignsDeleteVirtLnInline', { fg = '#ffffff', bg = '#a84d5f' })
 
-  local unstaged_sign_bg, staged_sign_bg = '#2d3544', '#1e2633'
+  local unstaged_sign_bg, staged_sign_bg = '#2d3544', '#171d29'
   for _, s in ipairs({
     { 'Add', '#21c7a8', '#00ffd5' },
     { 'Change', '#1e90ff', '#00a6ff' },
