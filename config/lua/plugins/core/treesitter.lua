@@ -40,6 +40,22 @@ return {
         end
         local lang = vim.treesitter.language.get_lang(vim.bo[bufnr].filetype)
         if lang and pcall(vim.treesitter.start, bufnr, lang) then
+          -- Force a synchronous initial parse so syntax highlights are present
+          -- on the first redraw instead of flashing in a frame later: the
+          -- highlighter's own first parse (highlighter.lua `_on_start`) uses the
+          -- async callback form of `LanguageTree:parse`, which yields after a 3ms
+          -- budget and only repaints once the async parse lands. Parsing here
+          -- without a callback runs to completion, so the tree is valid on the
+          -- first redraw. But a full parse is O(file size) (measured ~4-6ms at
+          -- ~150-220 lines, ~15ms at ~1400, 100ms+ beyond), so cap it — larger
+          -- buffers keep the async path (a brief flash beats a long freeze).
+          -- Edits always re-parse asynchronously (we don't set the global
+          -- `vim.g._ts_force_sync_parsing`); big/minified files returned above.
+          if vim.api.nvim_buf_line_count(bufnr) <= 1500 then
+            pcall(function()
+              vim.treesitter.get_parser(bufnr, lang):parse(true)
+            end)
+          end
           vim.bo[bufnr].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
         end
       end,
