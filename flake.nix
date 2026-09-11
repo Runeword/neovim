@@ -215,7 +215,7 @@
           ln -s ${pkgs.vimPlugins.nvim-notify}          $out/nvim-notify
           ln -s ${pkgs.vimPlugins.aerial-nvim}          $out/aerial.nvim
           ln -s ${pkgs.vimPlugins.trouble-nvim}         $out/trouble.nvim
-          ln -s ${pkgs.vimPlugins.nvim-highlight-colors} $out/nvim-highlight-colors
+          ln -s ${pkgs.vimPlugins.nvim-colorizer-lua}   $out/nvim-colorizer.lua
           ln -s ${pkgs.vimPlugins.highlight-undo-nvim}  $out/highlight-undo.nvim
           ln -s ${pkgs.vimPlugins.vim-highlightedyank} $out/vim-highlightedyank
           ln -s ${pkgs.vimPlugins.smear-cursor-nvim}    $out/smear-cursor.nvim
