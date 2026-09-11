@@ -25,6 +25,7 @@ o.pumblend = 10
 -- o.pumheight = 15
 o.clipboard = 'unnamedplus' -- Have the clipboard be the same as my regular clipboard
 o.updatetime = 50 -- Having longer updatetime (default is 4000 ms = 4 s) leads to noticeable delays and poor user experience
+o.synmaxcol = 300 -- Cap regex syntax at col 300 so long/minified lines don't stall redraw (treesitter guarded separately)
 o.swapfile = false
 o.termguicolors = true -- Enables 24-bit RGB color in the Terminal UI
 o.showmode = false -- Disable message on the last line (Insert, Replace or Visual mode)
