@@ -113,10 +113,15 @@ end
 
 local MIN_STRIDE = 2 -- never make a sub-2-line hop (avoids stutter-stepping)
 
+-- Only WARN and above count as stops / cursor targets. Counting HINT/INFO would
+-- degrade the motion to 1-line stutter hops in hint-dense buffers (e.g. lua_ls),
+-- defeating MIN_STRIDE.
+local DIAG_SEVERITY = { min = vim.diagnostic.severity.WARN }
+
 -- Diagnostic lines (1-indexed) in the current buffer.
 local function diagnostic_lines()
   local t = {}
-  for _, d in ipairs(vim.diagnostic.get(0)) do
+  for _, d in ipairs(vim.diagnostic.get(0, { severity = DIAG_SEVERITY })) do
     t[#t + 1] = d.lnum + 1
   end
   return t
@@ -125,7 +130,7 @@ end
 -- Leftmost diagnostic column (1-indexed) on line `lnum`, or nil if none.
 local function diagnostic_col(lnum)
   local best
-  for _, d in ipairs(vim.diagnostic.get(0, { lnum = lnum - 1 })) do
+  for _, d in ipairs(vim.diagnostic.get(0, { lnum = lnum - 1, severity = DIAG_SEVERITY })) do
     if not best or d.col + 1 < best then
       best = d.col + 1
     end
@@ -153,7 +158,10 @@ local function hunk_regions()
   local raw = {}
   for _, h in ipairs(gitsigns.get_hunks(vim.api.nvim_get_current_buf()) or {}) do
     if h.added and h.added.start then
-      local s = h.added.start
+      -- A top-of-file deletion is reported as added = { start = 0, count = 0 };
+      -- clamp to line 1 so it can't coalesce into a { 0, N } block that then
+      -- bricks upward motion near the top of the file.
+      local s = math.max(h.added.start, 1)
       raw[#raw + 1] = { s = s, e = s + math.max(h.added.count or 1, 1) - 1 }
     end
   end
@@ -175,8 +183,9 @@ end
 -- Nearest ABSOLUTE grid line (1, 1+stride, 1+2*stride, ...) in the travel
 -- direction that is non-blank and >= MIN_STRIDE from `cur`, else the buffer's
 -- content edge. Because the grid is absolute (not cursor- or block-relative),
--- <C-j> and <C-k> land on the same set of lines -- the motion is exactly
--- symmetric. Cost is O(1) arithmetic per grid step; the loop iterates only over
+-- <C-j> and <C-k> land on the same set of lines -- the motion is near-symmetric
+-- (off-grid starts self-correct after one hop). Cost is O(1) arithmetic per grid
+-- step; the loop iterates only over
 -- blank grid lines, so O(1) in dense text, at worst O(blank-run / stride).
 local function grid_stop(cur, stride, down, firstC, lastC)
   if down then
@@ -209,7 +218,8 @@ function M.move_to_non_empty_line(lines)
   local lastC = vim.fn.prevnonblank(vim.fn.line('$'))
 
   -- Default landing: the nearest absolute grid stop in the travel direction (see
-  -- grid_stop) -- an absolute grid makes <C-j>/<C-k> exact inverses, in O(1).
+  -- grid_stop) -- an absolute grid makes <C-j>/<C-k> near-inverses (self-correcting
+  -- after one hop), in O(1).
   local cap = grid_stop(cur, math.abs(lines), down, firstC, lastC)
 
   -- Nearest paragraph top within reach. Scan MIN_STRIDE past the grid stop so both
@@ -221,10 +231,10 @@ function M.move_to_non_empty_line(lines)
   -- (here the blank line), not the returned content line.
   local para
   if down then
-    para = vim.fn.search([[^$\n\s*\%>]] .. (cur + MIN_STRIDE - 1) .. [[l\zs\S]], 'nW', cap + MIN_STRIDE)
+    para = vim.fn.search([[^\s*$\n\s*\%>]] .. (cur + MIN_STRIDE - 1) .. [[l\zs\S]], 'nW', cap + MIN_STRIDE)
   else
     para = vim.fn.search(
-      [[^$\n\s*\%<]] .. math.max(cur - MIN_STRIDE + 1, 1) .. [[l\zs\S]],
+      [[^\s*$\n\s*\%<]] .. math.max(cur - MIN_STRIDE + 1, 1) .. [[l\zs\S]],
       'nWb',
       math.max(cap - MIN_STRIDE, 1)
     )
@@ -272,9 +282,19 @@ function M.move_to_non_empty_line(lines)
   -- in its body, only its start -- moving down skip past its end, moving up jump
   -- to its start. A BIG block is stepped through at the normal stride instead.
   for _, r in ipairs(regions) do
-    if target > r.s and target <= r.e and r.e - r.s <= math.abs(lines) then
+    if
+      target > r.s
+      and target <= r.e
+      and r.e - r.s <= math.abs(lines)
+      and not diagnostic_col(target) -- a diagnostic in the body is a stop; keep it reachable
+    then
       if down then
-        target = vim.fn.nextnonblank(r.e + 1)
+        local after = vim.fn.nextnonblank(r.e + 1)
+        if after == 0 then
+          target = math.min(r.e, lastC) -- nothing past the hunk: last content line, not "stay put"
+        else
+          target = math.min(after, cap) -- skip past the hunk, but never past the cap
+        end
       else
         target = r.s
       end
@@ -285,6 +305,12 @@ function M.move_to_non_empty_line(lines)
   -- can land on the far content edge (behind the cursor) -- stay put instead.
   if target == 0 or (down and target < cur) or (not down and target > cur) then
     target = cur
+  end
+
+  -- A genuine no-op: leave the cursor entirely alone. cursor() would still reset
+  -- the column (e.g. (2,3) -> (2,1) on a blank line), perturbing a visual selection.
+  if target == cur then
+    return
   end
 
   -- Land on the diagnostic's own column when the target line carries one (right
