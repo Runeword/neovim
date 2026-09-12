@@ -122,11 +122,27 @@ vim.api.nvim_create_autocmd('FileType', {
     vim.bo[args.buf].buflisted = false
     local lines = vim.api.nvim_buf_line_count(args.buf)
     vim.cmd(math.max(math.min(lines, 10), 3) .. 'wincmd _')
+    -- This FileType fires for location-list windows too. Jump the matching list
+    -- (lfirst vs cfirst), and only when it is non-empty -- a bare cfirst/lfirst
+    -- on an empty list throws E42 (here, as an uncaught scheduled traceback).
+    local win = vim.api.nvim_get_current_win()
+    local is_loclist = vim.fn.getwininfo(win)[1].loclist == 1
     vim.schedule(function()
-      vim.cmd('cfirst')
+      if not vim.api.nvim_win_is_valid(win) then
+        return
+      end
+      if is_loclist then
+        if vim.fn.getloclist(win, { size = 0 }).size > 0 then
+          vim.api.nvim_win_call(win, function()
+            pcall(vim.cmd, 'lfirst')
+          end)
+        end
+      elseif vim.fn.getqflist({ size = 0 }).size > 0 then
+        pcall(vim.cmd, 'cfirst')
+      end
     end)
   end,
-  desc = 'Quickfix: hide from buffer list, fit to 3-10 lines, jump to first item',
+  desc = 'Quickfix/loclist: hide from buffer list, fit to 3-10 lines, jump to first item',
 })
 
 vim.api.nvim_create_augroup('lsp_keymaps', { clear = true })
