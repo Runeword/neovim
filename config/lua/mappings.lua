@@ -23,30 +23,33 @@ vim.keymap.set({ 'x', 'n' }, '<Enter>', '<Space>', { remap = true })
 vim.keymap.set({ 'x', 'n' }, '<Leader>q', '<cmd>qa!<CR>')
 vim.keymap.set({ 'x', 'n' }, 'Q', '<cmd>qa!<CR>')
 
+-- True only when a real quickfix window is open in the CURRENT tabpage. A plain
+-- getwininfo() scan matched location-list windows (they also report quickfix=1)
+-- and windows in other tabpages.
 local function is_quickfix_open()
-  for _, win in ipairs(vim.fn.getwininfo()) do
-    if win.quickfix == 1 then
-      return true
-    end
+  return vim.fn.getqflist({ winid = 0 }).winid ~= 0
+end
+
+-- Move through the quickfix list, wrapping at the ends. A no-op on an empty list
+-- (a bare :cnext throws E42); the wrap fallback is pcall'd in case it mutates.
+local function quickfix_nav(step, wrap)
+  if vim.fn.getqflist({ size = 0 }).size == 0 then
+    return
   end
-  return false
+  if not pcall(vim.cmd, step) then
+    pcall(vim.cmd, wrap)
+  end
 end
 
 vim.keymap.set('n', '<Tab>', function()
   if is_quickfix_open() then
-    local success, _ = pcall(vim.cmd, 'cnext')
-    if not success then
-      vim.cmd('cfirst')
-    end
+    quickfix_nav('cnext', 'cfirst')
   end
 end, { desc = 'Navigate to next quickfix item' })
 
 vim.keymap.set('n', '<S-Tab>', function()
   if is_quickfix_open() then
-    local success, _ = pcall(vim.cmd, 'cprevious')
-    if not success then
-      vim.cmd('clast')
-    end
+    quickfix_nav('cprevious', 'clast')
   end
 end, { desc = 'Navigate to previous quickfix item' })
 
@@ -127,9 +130,16 @@ vim.keymap.set('n', 'V', require('functions').visualSelectToEndOfline)
 
 vim.keymap.set('i', '<C-a>', '<ESC>I')
 vim.keymap.set('i', '<C-e>', '<END>')
-vim.keymap.set('i', '<C-k>', '<ESC>ld$i')
-vim.keymap.set('i', '<C-j>', '<C-u>')
+-- Kill to end of line, staying in insert (so it also works with the completion
+-- menu open) and black-holed (honours the delete-to-"_ convention). <C-\><C-o>
+-- instead of <C-o> because <C-o>D pulls the cursor back at EOL and eats a char.
+vim.keymap.set('i', '<C-k>', '<C-\\><C-o>"_D')
+-- Kill to start of insert (builtin i_CTRL-U). <C-g>u first so an accidental
+-- <C-j> (right next to <C-k>) is its own undo step, not merged into the session.
+vim.keymap.set('i', '<C-j>', '<C-g>u<C-u>')
 vim.keymap.set('i', '<C-u>', '<C-o>S')
+-- Digraphs (builtin i_CTRL-K, shadowed above) rehomed here -- É À Ç « » etc.
+vim.keymap.set('i', '<C-b>', '<C-k>')
 
 --------------------------------- MOTIONS
 
@@ -138,20 +148,14 @@ vim.keymap.set({ 'x', 'n' }, 'j', 'gj')
 
 vim.keymap.set('n', '<C-k>', function()
   if is_quickfix_open() then
-    local success, _ = pcall(vim.cmd, 'cprevious')
-    if not success then
-      vim.cmd('clast')
-    end
+    quickfix_nav('cprevious', 'clast')
   else
     require('functions').move_to_non_empty_line(-4)
   end
 end, { noremap = true, desc = 'Quickfix previous item, else jump up 4 non-empty lines' })
 vim.keymap.set('n', '<C-j>', function()
   if is_quickfix_open() then
-    local success, _ = pcall(vim.cmd, 'cnext')
-    if not success then
-      vim.cmd('cfirst')
-    end
+    quickfix_nav('cnext', 'cfirst')
   else
     require('functions').move_to_non_empty_line(4)
   end
@@ -160,6 +164,16 @@ vim.keymap.set('x', '<C-k>', function()
   require('functions').move_to_non_empty_line(-4)
 end, { noremap = true })
 vim.keymap.set('x', '<C-j>', function()
+  require('functions').move_to_non_empty_line(4)
+end, { noremap = true })
+-- Operator-pending: d<C-j>/d<C-k> act on the jumped range, linewise (like dj/dk),
+-- instead of falling through to builtin <C-j>/<C-k> (= j/k, a 2-line delete).
+vim.keymap.set('o', '<C-k>', function()
+  vim.cmd('normal! V')
+  require('functions').move_to_non_empty_line(-4)
+end, { noremap = true })
+vim.keymap.set('o', '<C-j>', function()
+  vim.cmd('normal! V')
   require('functions').move_to_non_empty_line(4)
 end, { noremap = true })
 vim.keymap.set('n', '0', 'g0')
