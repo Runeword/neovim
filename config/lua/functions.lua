@@ -138,13 +138,20 @@ local HUNK_GAP = 2 -- hunks within this many lines merge into one block (tunable
 -- Git hunk blocks as { s = start, e = end } (1-indexed), sorted, with hunks that
 -- sit within HUNK_GAP lines of each other coalesced into one block. {} if
 -- gitsigns is absent / not attached.
+local gitsigns -- cached module handle so the hot path skips pcall(require) each call
 local function hunk_regions()
-  local ok, gs = pcall(require, 'gitsigns')
-  if not ok or not gs.get_hunks then
+  if not gitsigns then
+    local ok, gs = pcall(require, 'gitsigns')
+    if not ok then
+      return {}
+    end
+    gitsigns = gs
+  end
+  if not gitsigns.get_hunks then
     return {}
   end
   local raw = {}
-  for _, h in ipairs(gs.get_hunks(vim.api.nvim_get_current_buf()) or {}) do
+  for _, h in ipairs(gitsigns.get_hunks(vim.api.nvim_get_current_buf()) or {}) do
     if h.added and h.added.start then
       local s = h.added.start
       raw[#raw + 1] = { s = s, e = s + math.max(h.added.count or 1, 1) - 1 }
@@ -165,32 +172,65 @@ local function hunk_regions()
   return regions
 end
 
+-- Nearest ABSOLUTE grid line (1, 1+stride, 1+2*stride, ...) in the travel
+-- direction that is non-blank and >= MIN_STRIDE from `cur`, else the buffer's
+-- content edge. Because the grid is absolute (not cursor- or block-relative),
+-- <C-j> and <C-k> land on the same set of lines -- the motion is exactly
+-- symmetric. Cost is O(1) arithmetic per grid step; the loop iterates only over
+-- blank grid lines, so O(1) in dense text, at worst O(blank-run / stride).
+local function grid_stop(cur, stride, down, firstC, lastC)
+  if down then
+    local g = cur - ((cur - 1) % stride) + stride
+    while g <= lastC do
+      if g - cur >= MIN_STRIDE and vim.fn.getline(g):find('%S') then
+        return g
+      end
+      g = g + stride
+    end
+    return lastC
+  end
+  local g = cur - ((cur - 1) % stride)
+  if g >= cur then
+    g = g - stride
+  end
+  while g >= firstC do
+    if cur - g >= MIN_STRIDE and vim.fn.getline(g):find('%S') then
+      return g
+    end
+    g = g - stride
+  end
+  return firstC
+end
+
 function M.move_to_non_empty_line(lines)
   local cur = vim.fn.line('.')
   local down = lines > 0
+  local firstC = vim.fn.nextnonblank(1)
+  local lastC = vim.fn.prevnonblank(vim.fn.line('$'))
 
-  -- Default landing: |lines| away, snapped to a non-blank line, clamped to the
-  -- last/first content line at the buffer edge.
-  local cap
-  if down then
-    cap = vim.fn.nextnonblank(cur + lines)
-    if cap == 0 then
-      cap = vim.fn.prevnonblank(vim.fn.line('$'))
-    end
-  else
-    cap = vim.fn.prevnonblank(cur + lines)
-    if cap == 0 then
-      cap = vim.fn.nextnonblank(1)
-    end
-  end
+  -- Default landing: the nearest absolute grid stop in the travel direction (see
+  -- grid_stop) -- an absolute grid makes <C-j>/<C-k> exact inverses, in O(1).
+  local cap = grid_stop(cur, math.abs(lines), down, firstC, lastC)
 
-  -- Nearest paragraph boundary within reach, honouring MIN_STRIDE. \%>Nl / \%<Nl
-  -- anchor the content line past that gap; the stopline bounds the scan at cap.
+  -- Nearest paragraph top within reach. Scan MIN_STRIDE past the grid stop so both
+  -- directions see a top that straddles the grid line; the explicit test then keeps
+  -- only the acceptable ones -- a top within MIN_STRIDE of the grid stop dominates
+  -- it (so <C-j>/<C-k> agree), else the nearer of the two wins. \%>Nl / \%<Nl keep
+  -- the top itself >= MIN_STRIDE from the cursor. NB: the filter is explicit rather
+  -- than folded into the stopline because search()'s stopline bounds the match START
+  -- (here the blank line), not the returned content line.
   local para
   if down then
-    para = vim.fn.search([[^$\n\s*\%>]] .. (cur + MIN_STRIDE - 1) .. [[l\zs\S]], 'nW', cap)
+    para = vim.fn.search([[^$\n\s*\%>]] .. (cur + MIN_STRIDE - 1) .. [[l\zs\S]], 'nW', cap + MIN_STRIDE)
   else
-    para = vim.fn.search([[^$\n\s*\%<]] .. math.max(cur - MIN_STRIDE + 1, 1) .. [[l\zs\S]], 'nWb', cap)
+    para = vim.fn.search(
+      [[^$\n\s*\%<]] .. math.max(cur - MIN_STRIDE + 1, 1) .. [[l\zs\S]],
+      'nWb',
+      math.max(cap - MIN_STRIDE, 1)
+    )
+  end
+  if para ~= 0 and (math.abs(para - cap) < MIN_STRIDE or (down and para < cap) or (not down and para > cap)) then
+    cap = para
   end
 
   -- Fold in diagnostics and git hunks as extra stops: high-value edit sites, so
@@ -206,7 +246,20 @@ function M.move_to_non_empty_line(lines)
       end
     end
   end
-  consider(para)
+
+  -- Endpoint absorb: a structural stop within MIN_STRIDE of a content edge is
+  -- visited going one way but skipped (min-stride) the other; snap it to the edge
+  -- so both directions agree. Diagnostics/hunks fold in after and can still pull shorter.
+  if down then
+    if lastC > target and lastC - target < MIN_STRIDE then
+      target = lastC
+    end
+  else
+    if firstC < target and target - firstC < MIN_STRIDE then
+      target = firstC
+    end
+  end
+
   for _, l in ipairs(diagnostic_lines()) do
     consider(l)
   end
@@ -228,7 +281,9 @@ function M.move_to_non_empty_line(lines)
     end
   end
 
-  if target == 0 then
+  -- Never reverse direction: on trailing/leading blank lines the edge fallbacks
+  -- can land on the far content edge (behind the cursor) -- stay put instead.
+  if target == 0 or (down and target < cur) or (not down and target > cur) then
     target = cur
   end
 
