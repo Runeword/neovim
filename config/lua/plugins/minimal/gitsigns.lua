@@ -14,6 +14,7 @@ return {
       linehl = false,
       current_line_blame = true,
       current_line_blame_opts = { delay = 200 },
+      current_line_blame_formatter = ' <abbrev_sha> · <author>, <author_time:%Y-%m-%d %H:%M> (<author_time:%R>) · <summary> ',
 
       -- In-buffer staging (e.g. <leader>ga) does one synchronous sign repaint,
       -- but the .git-dir watcher then fires a *second* full clear+repaint
@@ -26,36 +27,49 @@ return {
       watch_gitdir = { enable = false },
 
       on_attach = function(buffer)
-        vim.keymap.set(
-          { 'n', 'x' },
-          '<leader>ga',
-          package.loaded.gitsigns.stage_buffer,
-          { buffer = buffer, desc = 'git add file' }
-        )
+        local gs = package.loaded.gitsigns
+
+        -- stage_buffer / reset_buffer_index are async git writes that mutate
+        -- gitsigns' in-memory copy of the index (compare_text). Mashing
+        -- <leader>ga fires overlapping calls that race and corrupt compare_text;
+        -- because the gitdir watcher is disabled below, nothing re-reads git to
+        -- heal the drift, so the signs then show phantom hunks and keep flipping
+        -- on every further press even with no new edits. Drop re-entrant presses
+        -- until the in-flight write completes (the callback fires on every path,
+        -- including the "nothing to stage" early return, so busy can't wedge).
+        local busy = false
+        local function guard(action)
+          return function()
+            if busy then
+              return
+            end
+            busy = true
+            action(function()
+              busy = false
+            end)
+          end
+        end
+
+        vim.keymap.set({ 'n', 'x' }, '<leader>ga', guard(gs.stage_buffer), { buffer = buffer, desc = 'git add file' })
         vim.keymap.set(
           { 'n', 'x' },
           '<leader>gr',
-          package.loaded.gitsigns.reset_buffer_index,
+          guard(gs.reset_buffer_index),
           { buffer = buffer, desc = 'git reset file' }
         )
-        vim.keymap.set(
-          { 'n', 'x' },
-          '<leader>gc',
-          package.loaded.gitsigns.reset_buffer,
-          { buffer = buffer, desc = 'git checkout -- file' }
-        )
+        vim.keymap.set({ 'n', 'x' }, '<leader>gc', gs.reset_buffer, { buffer = buffer, desc = 'git checkout -- file' })
         vim.keymap.set(
           { 'n', 'x' },
           '<leader>gb',
-          package.loaded.gitsigns.toggle_current_line_blame,
+          gs.toggle_current_line_blame,
           { buffer = buffer, desc = 'git blame' }
         )
-        vim.keymap.set({ 'n', 'x' }, '<leader>gd', package.loaded.gitsigns.toggle_deleted, { buffer = buffer })
+        vim.keymap.set({ 'n', 'x' }, '<leader>gd', gs.toggle_deleted, { buffer = buffer })
         vim.keymap.set({ 'n', 'x' }, '<C-g>', function()
-          package.loaded.gitsigns.nav_hunk('next', { target = 'all' })
+          gs.nav_hunk('next', { target = 'all' })
         end, { buffer = buffer, desc = 'next hunk' })
         vim.keymap.set({ 'n', 'x' }, '<C-S-g>', function()
-          package.loaded.gitsigns.nav_hunk('prev', { target = 'all' })
+          gs.nav_hunk('prev', { target = 'all' })
         end, { buffer = buffer, desc = 'prev hunk' })
       end,
 
