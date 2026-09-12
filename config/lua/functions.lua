@@ -111,21 +111,132 @@ end
 
 -------------------- Move
 
-function M.move_to_non_empty_line(lines)
-  local new_line
+local MIN_STRIDE = 2 -- never make a sub-2-line hop (avoids stutter-stepping)
 
-  if lines > 0 then
-    local nextParagraphStart = vim.fn.search([[\(^$\n\s*\zs\S\)\|\(\S\ze\n*\%$\)]], 'nW')
-    local nextNonBlank = vim.fn.nextnonblank(vim.fn.line('.') + lines)
-    new_line = nextNonBlank < nextParagraphStart and nextNonBlank or nextParagraphStart
+-- Diagnostic lines (1-indexed) in the current buffer.
+local function diagnostic_lines()
+  local t = {}
+  for _, d in ipairs(vim.diagnostic.get(0)) do
+    t[#t + 1] = d.lnum + 1
+  end
+  return t
+end
+
+-- Leftmost diagnostic column (1-indexed) on line `lnum`, or nil if none.
+local function diagnostic_col(lnum)
+  local best
+  for _, d in ipairs(vim.diagnostic.get(0, { lnum = lnum - 1 })) do
+    if not best or d.col + 1 < best then
+      best = d.col + 1
+    end
+  end
+  return best
+end
+
+local HUNK_GAP = 2 -- hunks within this many lines merge into one block (tunable)
+
+-- Git hunk blocks as { s = start, e = end } (1-indexed), sorted, with hunks that
+-- sit within HUNK_GAP lines of each other coalesced into one block. {} if
+-- gitsigns is absent / not attached.
+local function hunk_regions()
+  local ok, gs = pcall(require, 'gitsigns')
+  if not ok or not gs.get_hunks then
+    return {}
+  end
+  local raw = {}
+  for _, h in ipairs(gs.get_hunks(vim.api.nvim_get_current_buf()) or {}) do
+    if h.added and h.added.start then
+      local s = h.added.start
+      raw[#raw + 1] = { s = s, e = s + math.max(h.added.count or 1, 1) - 1 }
+    end
+  end
+  table.sort(raw, function(a, b)
+    return a.s < b.s
+  end)
+  local regions = {}
+  for _, r in ipairs(raw) do
+    local last = regions[#regions]
+    if last and r.s - last.e - 1 <= HUNK_GAP then
+      last.e = math.max(last.e, r.e)
+    else
+      regions[#regions + 1] = { s = r.s, e = r.e }
+    end
+  end
+  return regions
+end
+
+function M.move_to_non_empty_line(lines)
+  local cur = vim.fn.line('.')
+  local down = lines > 0
+
+  -- Default landing: |lines| away, snapped to a non-blank line, clamped to the
+  -- last/first content line at the buffer edge.
+  local cap
+  if down then
+    cap = vim.fn.nextnonblank(cur + lines)
+    if cap == 0 then
+      cap = vim.fn.prevnonblank(vim.fn.line('$'))
+    end
   else
-    local prevParagraphStart = vim.fn.search([[\(^$\n\s*\zs\S\)\|\(^\%1l\s*\zs\S\)]], 'nWb')
-    local prevNonBlank = vim.fn.prevnonblank(vim.fn.line('.') + lines)
-    new_line = prevNonBlank > prevParagraphStart and prevNonBlank or prevParagraphStart
+    cap = vim.fn.prevnonblank(cur + lines)
+    if cap == 0 then
+      cap = vim.fn.nextnonblank(1)
+    end
   end
 
-  -- Move the cursor to the first non-blank character of the line
-  vim.fn.cursor(new_line, vim.fn.getline(new_line):find('%S') or 1)
+  -- Nearest paragraph boundary within reach, honouring MIN_STRIDE. \%>Nl / \%<Nl
+  -- anchor the content line past that gap; the stopline bounds the scan at cap.
+  local para
+  if down then
+    para = vim.fn.search([[^$\n\s*\%>]] .. (cur + MIN_STRIDE - 1) .. [[l\zs\S]], 'nW', cap)
+  else
+    para = vim.fn.search([[^$\n\s*\%<]] .. math.max(cur - MIN_STRIDE + 1, 1) .. [[l\zs\S]], 'nWb', cap)
+  end
+
+  -- Fold in diagnostics and git hunks as extra stops: high-value edit sites, so
+  -- (unlike paragraph stops) they fire even closer than MIN_STRIDE -- but never
+  -- past the cap, so the stride stays bounded and predictable.
+  local target = cap
+  local function consider(v)
+    if v and v ~= 0 then
+      if down and v > cur and v < target then
+        target = v
+      elseif not down and v < cur and v > target then
+        target = v
+      end
+    end
+  end
+  consider(para)
+  for _, l in ipairs(diagnostic_lines()) do
+    consider(l)
+  end
+  local regions = hunk_regions()
+  for _, r in ipairs(regions) do
+    consider(r.s) -- a hunk block is a single stop, at its start line
+  end
+
+  -- A SMALL hunk block (spanning <= one stride) is a single waypoint: never land
+  -- in its body, only its start -- moving down skip past its end, moving up jump
+  -- to its start. A BIG block is stepped through at the normal stride instead.
+  for _, r in ipairs(regions) do
+    if target > r.s and target <= r.e and r.e - r.s <= math.abs(lines) then
+      if down then
+        target = vim.fn.nextnonblank(r.e + 1)
+      else
+        target = r.s
+      end
+    end
+  end
+
+  if target == 0 then
+    target = cur
+  end
+
+  -- Land on the diagnostic's own column when the target line carries one (right
+  -- on the offending token); otherwise the first non-blank character. Hunks are
+  -- line-scoped (no column), so they also fall back to the first non-blank.
+  local col = diagnostic_col(target) or vim.fn.getline(target):find('%S') or 1
+  vim.fn.cursor(target, col)
 end
 
 -------------------- Edit
