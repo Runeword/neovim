@@ -63,8 +63,8 @@ return {
 
     -- Operator-pending aliases: bare keys map to the inner/outer variant
     -- mini.ai exposes. `f`/`F`/`s` mirror the old `@function.outer`,
-    -- `@call.outer`, `@statement.outer` behavior; `b`/`p` resolve to the
-    -- inner block/loop to match prior muscle memory.
+    -- `@call.outer`, `@statement.outer` behavior; `b` resolves to the inner
+    -- block, `p` to the inner paragraph (see textobjects/miniai.lua).
     vim.keymap.set({ 'o', 'x' }, 'f', 'af', { remap = true })
     vim.keymap.set({ 'o', 'x' }, 'F', 'aF', { remap = true })
     vim.keymap.set({ 'o', 'x' }, 's', 'as', { remap = true })
