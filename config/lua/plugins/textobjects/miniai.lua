@@ -18,8 +18,9 @@ return {
         f = gen_spec.treesitter({ a = '@function.outer', i = '@function.inner' }),
         F = gen_spec.treesitter({ a = '@call.outer', i = '@call.inner' }),
         b = gen_spec.treesitter({ a = '@block.outer', i = '@block.inner' }),
-        p = gen_spec.treesitter({ a = '@loop.outer', i = '@loop.inner' }),
+        -- p = gen_spec.treesitter({ a = '@loop.outer', i = '@loop.inner' }),
         s = gen_spec.treesitter({ a = '@statement.outer', i = '@statement.outer' }),
+        p = false,
 
         a = gen_spec.argument({ brackets = { '%b()', '%b{}', '%b[]' } }),
         o = { { '%b()', '%b[]', '%b{}', '%b<>' }, '^.().*().$' },
