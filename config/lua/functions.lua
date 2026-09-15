@@ -320,6 +320,108 @@ function M.move_to_non_empty_line(lines)
   vim.fn.cursor(target, col)
 end
 
+-------------------- Sticky motion
+
+-- Sticky hjkl navigation submode -- a dependency-free replacement for the old
+-- hydra 'scroll' hydra. While active, h/j/k/l move one step at a time (shadowing
+-- j/k's usual 4-line jump) and every other key works exactly as normal.
+--
+-- Entering: a broad set of motions (STICKY_ENTRY) is wrapped by M.armStickyEntry
+-- so pressing one does its usual thing AND arms the submode. Wrapping (rather than
+-- a global vim.on_key) is deliberate: a mapping only fires when the key is a
+-- command, so `fw`, `rw`, `"wp` etc. -- where the letter is an argument -- do NOT
+-- trip it, and each key's existing plugin behaviour (spider w/b/e, asterisk */#,
+-- the custom `,` search, ...) is preserved by capturing and re-invoking its
+-- original mapping. gj / gk enter too, nudging one line, and while active do the
+-- smart 4-line jump + exit.
+--
+-- Leaving: <Esc> (an on_key watcher, live only while active) or gj / gk. It is all
+-- non-blocking, so the cursor stays visible (cf. the getcharstr "busy" cursor bug,
+-- neovim/neovim#20793).
+local STICKY_KEYS = { 'h', 'j', 'k', 'l' } -- one-step moves while active
+-- Motions that enter the submode (wrapped by armStickyEntry). `ge` is covered by
+-- its own two-key mapping; `gj`/`gk` are handled separately (stickyMotion).
+local STICKY_ENTRY = { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
+local STICKY_JUMP = 4 -- lines for the gj/gk smart jump (matches global j/k)
+local STICKY_ESC = vim.keycode('<Esc>')
+local sticky_ns = vim.api.nvim_create_namespace('sticky_motion')
+local sticky_active = false
+local sticky_armed = false
+
+local function sticky_stop()
+  if not sticky_active then
+    return
+  end
+  sticky_active = false
+  vim.on_key(nil, sticky_ns)
+  for _, key in ipairs(STICKY_KEYS) do
+    pcall(vim.keymap.del, 'n', key, { buffer = 0 })
+  end
+end
+
+local function sticky_start()
+  if sticky_active then
+    return
+  end
+  sticky_active = true
+  -- Buffer-local hjkl (shadowing j/k's 4-line jump and default h/l) do the moves;
+  -- deleting them on exit restores the originals.
+  for _, key in ipairs(STICKY_KEYS) do
+    vim.keymap.set('n', key, function()
+      vim.cmd('normal! ' .. key)
+    end, { buffer = 0, desc = 'Sticky motion: ' .. key })
+  end
+  -- Live only while active: observe (never consume) to catch the <Esc> exit.
+  vim.on_key(function(_, typed)
+    if typed == STICKY_ESC then
+      vim.schedule(sticky_stop)
+    end
+  end, sticky_ns)
+end
+
+-- Wrap every STICKY_ENTRY motion so it runs its current behaviour and then arms
+-- the submode. Call once from a `User VeryLazy` autocmd (see mappings.lua): spider
+-- / asterisk / ... set their maps during startup, after mappings.lua, so we
+-- capture the live mapping here and re-invoke it, preserving that behaviour.
+function M.armStickyEntry()
+  if sticky_armed then
+    return
+  end
+  sticky_armed = true
+  for _, key in ipairs(STICKY_ENTRY) do
+    local orig = vim.fn.maparg(key, 'n', false, true)
+    local run
+    if orig.callback then
+      run = orig.callback
+    elseif type(orig.rhs) == 'string' and orig.rhs ~= '' then
+      local keys, remap = vim.keycode(orig.rhs), orig.noremap == 1 and 'n' or 'm'
+      run = function()
+        vim.api.nvim_feedkeys(keys, remap, false)
+      end
+    else
+      run = function()
+        vim.cmd('normal! ' .. key)
+      end
+    end
+    vim.keymap.set('n', key, function()
+      run()
+      sticky_start()
+    end, { desc = 'Sticky-enter (' .. key .. ')' })
+  end
+end
+
+-- gj / gk (bound in mappings.lua): enter with a one-line nudge, or -- already
+-- active -- do the smart 4-line jump and leave.
+function M.stickyMotion(first)
+  if sticky_active then
+    M.move_to_non_empty_line(first == 'j' and STICKY_JUMP or -STICKY_JUMP)
+    sticky_stop()
+  else
+    vim.cmd('normal! ' .. first)
+    sticky_start()
+  end
+end
+
 -------------------- Edit
 
 -- When the line is empty, move the cursor to the beginning of the line
