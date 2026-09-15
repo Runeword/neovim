@@ -92,6 +92,9 @@ vim.keymap.set({ 'o', 'x' }, 'i<Tab>', 'ip')
 vim.keymap.set({ 'o' }, '<Tab>', 'ip')
 
 vim.keymap.set({ 'o', 'x' }, 'q', 'iq', { remap = true })
+-- t = inner HTML/XML tag (mini.ai's tag object). Only in o/x, so normal-mode
+-- t<char> "till" still works; ct/dt/vt now act on the surrounding tag.
+vim.keymap.set({ 'o', 'x' }, 't', 'it', { remap = true })
 vim.keymap.set({ 'o' }, '(', 'i(')
 vim.keymap.set({ 'o' }, ')', 'i)')
 vim.keymap.set({ 'o' }, '[', 'i[')
@@ -143,23 +146,27 @@ vim.keymap.set('i', '<C-b>', '<C-k>')
 
 --------------------------------- MOTIONS
 
-vim.keymap.set({ 'x', 'n' }, 'k', 'gk')
-vim.keymap.set({ 'x', 'n' }, 'j', 'gj')
-
-vim.keymap.set('n', '<C-k>', function()
+-- j/k jump by 4 non-empty lines in normal mode (quickfix nav when it's open).
+-- These used to route through <C-j>/<C-k>, but those chords now trigger splitjoin
+-- (see splitjoin.lua), so the jump logic is inlined here. In visual and
+-- operator-pending, j/k stay ordinary single-line motions (vj / dj / cj move one
+-- line) while <C-j>/<C-k> keep the 4-line jump.
+vim.keymap.set('n', 'k', function()
   if is_quickfix_open() then
     quickfix_nav('cprevious', 'clast')
   else
     require('functions').move_to_non_empty_line(-4)
   end
 end, { noremap = true, desc = 'Quickfix previous item, else jump up 4 non-empty lines' })
-vim.keymap.set('n', '<C-j>', function()
+vim.keymap.set('n', 'j', function()
   if is_quickfix_open() then
     quickfix_nav('cnext', 'cfirst')
   else
     require('functions').move_to_non_empty_line(4)
   end
 end, { noremap = true, desc = 'Quickfix next item, else jump down 4 non-empty lines' })
+vim.keymap.set('x', 'k', 'gk')
+vim.keymap.set('x', 'j', 'gj')
 vim.keymap.set('x', '<C-k>', function()
   require('functions').move_to_non_empty_line(-4)
 end, { noremap = true })
@@ -176,6 +183,28 @@ vim.keymap.set('o', '<C-j>', function()
   vim.cmd('normal! V')
   require('functions').move_to_non_empty_line(4)
 end, { noremap = true })
+
+-- Sticky hjkl navigation submode (native replacement for the old hydra 'scroll'
+-- hydra): a broad set of motions (h l w b e W B E ge $ ^ n N ; , . * #, see
+-- STICKY_ENTRY) enters it -- keeping each key's own behaviour -- as do gj / gk
+-- (nudging one line). While active, h/j/k/l move one step, every other key works
+-- as usual, and <Esc> exits (as do gj / gk, doing the 4-line smart jump on the way
+-- out). See functions.stickyMotion / functions.armStickyEntry.
+vim.keymap.set('n', 'gj', function()
+  require('functions').stickyMotion('j')
+end, { desc = 'Sticky motion: down / smart-jump out' })
+vim.keymap.set('n', 'gk', function()
+  require('functions').stickyMotion('k')
+end, { desc = 'Sticky motion: up / smart-jump out' })
+-- Install the entry-motion wrappers AFTER plugins (spider, asterisk, ...) set
+-- their own maps, so armStickyEntry captures and preserves the live mappings.
+vim.api.nvim_create_autocmd('User', {
+  pattern = 'VeryLazy',
+  callback = function()
+    require('functions').armStickyEntry()
+  end,
+})
+
 vim.keymap.set('n', '0', 'g0')
 
 -- vim.keymap.set('n', '$', function()
