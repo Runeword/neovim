@@ -11,7 +11,7 @@ return {
     vim.g.splitjoin_split_mapping = ''
     vim.g.splitjoin_join_mapping = ''
 
-    vim.keymap.set('n', 'gj', '<cmd>silent SplitjoinJoin<CR>')
-    vim.keymap.set('n', 'gk', '<cmd>silent SplitjoinSplit<CR>')
+    vim.keymap.set('n', '<C-j>', '<cmd>silent SplitjoinJoin<CR>')
+    vim.keymap.set('n', '<C-k>', '<cmd>silent SplitjoinSplit<CR>')
   end,
 }
