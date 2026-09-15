@@ -9,7 +9,7 @@ return {
     labels = ',pyaoeuidhtnsfgcrl;qjkxbmwvz',
     label = {
       uppercase = false,
-      after = { 0, 2, },
+      after = { 0, 2 },
     },
 
     highlight = {
@@ -26,7 +26,7 @@ return {
 
     prompt = {
       enabled = false,
-      prefix = { { '>', 'FlashPromptIcon', }, },
+      prefix = { { '>', 'FlashPromptIcon' } },
 
       win_config = {
         relative = 'cursor',
@@ -73,7 +73,7 @@ return {
         jump_labels = false,
         multi_line = true,
         -- label = { exclude = 'hjkliardc', },
-        keys = { 'f', 'F', 't', 'T', ';', ',', },
+        keys = { 'f', 'F', 't', 'T', ';', ',' },
 
         char_actions = function(motion)
           return {
@@ -84,22 +84,22 @@ return {
           }
         end,
 
-        search = { wrap = false, },
-        highlight = { backdrop = false, },
-        jump = { register = false, },
+        search = { wrap = false },
+        highlight = { backdrop = false },
+        jump = { register = false },
       },
     },
   },
 
   init = function()
-    vim.api.nvim_create_augroup('flash', { clear = true, })
+    vim.api.nvim_create_augroup('flash', { clear = true })
     vim.api.nvim_create_autocmd('ColorScheme', {
       group = 'flash',
       pattern = '*',
       callback = function()
-        vim.api.nvim_set_hl(0, 'FlashMatch', { bg = '#222b66', fg = 'white', bold = false, })
-        vim.api.nvim_set_hl(0, 'FlashCurrent', { bg = '#49f5b0', fg = 'black', bold = false, })
-        vim.api.nvim_set_hl(0, 'FlashLabel', { bg = '#5d00ff', fg = 'white', bold = false, })
+        vim.api.nvim_set_hl(0, 'FlashMatch', { bg = '#222b66', fg = 'white', bold = false })
+        vim.api.nvim_set_hl(0, 'FlashCurrent', { bg = '#49f5b0', fg = 'black', bold = false })
+        vim.api.nvim_set_hl(0, 'FlashLabel', { bg = '#5d00ff', fg = 'white', bold = false })
       end,
     })
   end,
@@ -118,8 +118,8 @@ return {
     --   desc = 'Flash',
     -- },
     {
-      't',
-      mode = { 'n', 'x', 'o', },
+      'f',
+      mode = { 'n', 'x', 'o' },
       function()
         require('flash').jump({
           search = {
@@ -131,9 +131,11 @@ return {
       desc = 'Flash',
     },
     {
-      '<C-t>',
-      mode = { 'i', },
-      function() require('flash').jump() end,
+      '<C-f>',
+      mode = { 'i' },
+      function()
+        require('flash').jump()
+      end,
       desc = 'Flash',
     },
   },
