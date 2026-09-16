@@ -147,8 +147,8 @@ vim.keymap.set('i', '<C-b>', '<C-k>')
 --------------------------------- MOTIONS
 
 -- j/k jump by 4 non-empty lines in normal mode (quickfix nav when it's open).
--- These used to route through <C-j>/<C-k>, but those chords now trigger splitjoin
--- (see splitjoin.lua), so the jump logic is inlined here. In visual and
+-- These used to route through <C-j>/<C-k>, but those chords now trigger treesj
+-- (see treesj.lua), so the jump logic is inlined here. In visual and
 -- operator-pending, j/k stay ordinary single-line motions (vj / dj / cj move one
 -- line) while <C-j>/<C-k> keep the 4-line jump.
 vim.keymap.set('n', 'k', function()
