@@ -196,7 +196,6 @@
           ln -s ${pkgs.vimPlugins.nvim-ts-autotag}   $out/nvim-ts-autotag
           ln -s ${pkgs.vimPlugins.nvim-surround}     $out/nvim-surround
           ln -s ${custom-plugins.vim-surround-funk}  $out/vim-surround-funk
-          ln -s ${pkgs.vimPlugins.splitjoin-vim}     $out/splitjoin.vim
           ln -s ${pkgs.vimPlugins.dial-nvim}         $out/dial.nvim
           ln -s ${pkgs.vimPlugins.vim-abolish}       $out/vim-abolish
           ln -s ${pkgs.vimPlugins.sort-nvim}         $out/sort.nvim
