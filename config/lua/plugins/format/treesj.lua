@@ -3,16 +3,18 @@ local vim = vim
 return {
   'Wansmer/treesj',
 
-  enabled = false,
+  enabled = true,
 
-  dependencies = { 'nvim-treesitter/nvim-treesitter', },
+  dependencies = { 'nvim-treesitter/nvim-treesitter' },
 
   config = function()
-    require('treesj').setup({
+    local treesj = require('treesj')
+
+    treesj.setup({
       max_join_length = 120,
       use_default_keymaps = false,
     })
 
-    vim.keymap.set('n', 'g<CR>', require('treesj').toggle)
+    vim.keymap.set('n', '<C-j>', treesj.toggle, { desc = 'treesj toggle' })
   end,
 }
