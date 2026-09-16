@@ -43,7 +43,6 @@ require('lazy').setup({
   { import = 'plugins.format.abolish' },
   { import = 'plugins.format.surround' },
   { import = 'plugins.format.autopairs' },
-  { import = 'plugins.format.splitjoin' },
   { import = 'plugins.format.stayinplace' },
   { import = 'plugins.move.flash' },
   { import = 'plugins.move.grasp' },
