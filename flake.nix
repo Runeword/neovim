@@ -138,18 +138,6 @@
             rev = "1a6780d29adcf7e464e8ddbcd0be0a9df1a37339";
             hash = "sha256-h7c6PMg4rJMH1f+NibOuQW/ComTmtCMpkCqntezwKTY=";
           };
-          ts-node-action = pkgs.fetchFromGitHub {
-            owner = "ckolkey";
-            repo = "ts-node-action";
-            rev = "6d3b60754fd87963d70eadaa2f77873b447eac26";
-            hash = "sha256-kOXH3r+V+DAxoATSnZepEAekrkO1TezKSkONuQ3Kzu4=";
-          };
-          local-highlight-nvim = pkgs.fetchFromGitHub {
-            owner = "tzachar";
-            repo = "local-highlight.nvim";
-            rev = "dd8ae2ca26a5cfa17fb598864eacbe2df63938f3";
-            hash = "sha256-ApsyPsCECN6V0dRL9BCQZBgktyGDxpHu2aACujJ3Wus=";
-          };
         };
 
         # All active plugins installed via Nix. The wrapper points lazy.nvim's
@@ -250,13 +238,10 @@
           # so re-enabling is a one-line spec toggle.
           # Excludes anuvyklack/hydra.nvim (archived; collides with nvimtools fork).
           ln -s ${pkgs.vimPlugins.treesj}                   $out/treesj
-          ln -s ${pkgs.vimPlugins.vim-table-mode}           $out/vim-table-mode
-          ln -s ${custom-plugins.ts-node-action}            $out/ts-node-action
           ln -s ${pkgs.vimPlugins.nvim-dap}                 $out/nvim-dap
           ln -s ${pkgs.vimPlugins.nvim-dap-go}              $out/nvim-dap-go
           ln -s ${pkgs.vimPlugins.nvim-dap-virtual-text}    $out/nvim-dap-virtual-text
           ln -s ${pkgs.vimPlugins.one-small-step-for-vimkind} $out/one-small-step-for-vimkind
-          ln -s ${pkgs.vimPlugins.sniprun}                  $out/sniprun
           ln -s ${
             pkgs.vimPlugins.neotest.overrideAttrs (_: {
               # Upstream nixpkgs build runs neotest's own test harness which
@@ -273,9 +258,6 @@
           ln -s ${pkgs.vimPlugins.hydra-nvim}               $out/hydra.nvim
           ln -s ${pkgs.vimPlugins.yazi-nvim}                $out/yazi.nvim
           ln -s ${pkgs.vimPlugins.markview-nvim}            $out/markview.nvim
-          ln -s ${pkgs.vimPlugins.nvim-lightbulb}           $out/nvim-lightbulb
-          ln -s ${custom-plugins.local-highlight-nvim}      $out/local-highlight.nvim
-          ln -s ${pkgs.vimPlugins.virt-column-nvim}         $out/virt-column.nvim
         '';
 
         wrapper = with pkgs; ''
