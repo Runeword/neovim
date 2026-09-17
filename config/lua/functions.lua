@@ -348,7 +348,7 @@ local STICKY_ESC = vim.keycode('<Esc>')
 -- Shared "rapid burst" gap (ms): the largest pause between two j/k taps for them to
 -- count as mashed rather than deliberate. Used by rapidMotion (normal-mode accelerate)
 -- and by the sticky submode (a rapid jj/kk/jk/kj leaves it). Lower = must mash faster.
-local RAPID_MS = 200
+local RAPID_MS = 100
 local sticky_ns = vim.api.nvim_create_namespace('sticky_motion')
 local sticky_active = false
 local sticky_armed = false
