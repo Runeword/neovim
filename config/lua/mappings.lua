@@ -188,17 +188,9 @@ end, { noremap = true })
 
 -- Sticky hjkl navigation submode (native replacement for the old hydra 'scroll'
 -- hydra): a broad set of motions (h l w b e W B E ge $ ^ n N ; , . * #, see
--- STICKY_ENTRY) enters it -- keeping each key's own behaviour -- as do gj / gk
--- (nudging one line). While active, h/j/k/l move one step, every other key works
--- as usual, and <Esc> exits (as do gj / gk, doing the 4-line smart jump on the way
--- out, or mashing j/k -- a rapid jj/kk/jk/kj double-tap). See functions.stickyMotion
--- / functions.armStickyEntry.
-vim.keymap.set('n', 'gj', function()
-  require('functions').stickyMotion('j')
-end, { desc = 'Sticky motion: down / smart-jump out' })
-vim.keymap.set('n', 'gk', function()
-  require('functions').stickyMotion('k')
-end, { desc = 'Sticky motion: up / smart-jump out' })
+-- STICKY_ENTRY) enters it -- keeping each key's own behaviour. While active,
+-- h/j/k/l move one step, every other key works as usual, and <Esc> exits (or
+-- mashing j/k -- a rapid jj/kk/jk/kj double-tap). See functions.armStickyEntry.
 -- Install the entry-motion wrappers AFTER plugins (spider, asterisk, ...) set
 -- their own maps, so armStickyEntry captures and preserves the live mappings.
 vim.api.nvim_create_autocmd('User', {
