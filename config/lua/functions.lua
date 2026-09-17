@@ -335,18 +335,24 @@ end
 -- original mapping. gj / gk enter too, nudging one line, and while active do the
 -- smart 4-line jump + exit.
 --
--- Leaving: <Esc> (an on_key watcher, live only while active) or gj / gk. It is all
--- non-blocking, so the cursor stays visible (cf. the getcharstr "busy" cursor bug,
--- neovim/neovim#20793).
+-- Leaving: <Esc> (an on_key watcher, live only while active), gj / gk, or mashing
+-- j/k -- a rapid jj/kk/jk/kj (the second tap within RAPID_MS of the first) does its
+-- step and then drops out. It is all non-blocking, so the cursor stays visible (cf.
+-- the getcharstr "busy" cursor bug, neovim/neovim#20793).
 local STICKY_KEYS = { 'h', 'j', 'k', 'l' } -- one-step moves while active
 -- Motions that enter the submode (wrapped by armStickyEntry). `ge` is covered by
 -- its own two-key mapping; `gj`/`gk` are handled separately (stickyMotion).
 local STICKY_ENTRY = { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
 local STICKY_JUMP = 4 -- lines for the gj/gk smart jump (matches global j/k)
 local STICKY_ESC = vim.keycode('<Esc>')
+-- Shared "rapid burst" gap (ms): the largest pause between two j/k taps for them to
+-- count as mashed rather than deliberate. Used by rapidMotion (normal-mode accelerate)
+-- and by the sticky submode (a rapid jj/kk/jk/kj leaves it). Lower = must mash faster.
+local RAPID_MS = 200
 local sticky_ns = vim.api.nvim_create_namespace('sticky_motion')
 local sticky_active = false
 local sticky_armed = false
+local sticky_rapid_last = 0 -- vim.uv.now() of the previous j/k tap while active (rapid-exit)
 
 local function sticky_stop()
   if not sticky_active then
@@ -364,11 +370,24 @@ local function sticky_start()
     return
   end
   sticky_active = true
+  sticky_rapid_last = 0 -- fresh burst window, so the first j/k tap is never "rapid"
   -- Buffer-local hjkl (shadowing j/k's 4-line jump and default h/l) do the moves;
-  -- deleting them on exit restores the originals.
+  -- deleting them on exit restores the originals. j/k also watch for a rapid burst:
+  -- a second j/k within RAPID_MS (jj/kk/jk/kj) does its step and then leaves the
+  -- submode, so a quick mash escapes it. h/l move but break the j/k burst chain.
   for _, key in ipairs(STICKY_KEYS) do
     vim.keymap.set('n', key, function()
       vim.cmd('normal! ' .. key)
+      if key == 'j' or key == 'k' then
+        local now = vim.uv.now()
+        local rapid = now - sticky_rapid_last <= RAPID_MS
+        sticky_rapid_last = now
+        if rapid then
+          sticky_stop() -- rapid jj/kk/jk/kj -> leave the submode
+        end
+      else
+        sticky_rapid_last = 0 -- h / l break the j/k burst chain
+      end
     end, { buffer = 0, desc = 'Sticky motion: ' .. key })
   end
   -- Live only while active: observe (never consume) to catch the <Esc> exit.
@@ -419,6 +438,29 @@ function M.stickyMotion(first)
   else
     vim.cmd('normal! ' .. first)
     sticky_start()
+  end
+end
+
+-- A lone / deliberate j/k moves one line (precise -- the mappings.lua handlers call
+-- this). Mashing them -- a rapid burst jj, kk, jk, kj, ... each within RAPID_MS of
+-- the last -- accelerates to the 4-line smart jump, so a quick flurry travels fast
+-- while a single tap stays fine. The RAPID_COUNT-th quick tap is the first to jump
+-- (rapidity is only knowable once a follow-up lands); the run keeps jumping until
+-- the taps slow back down past RAPID_MS.
+-- RAPID_MS (the burst gap) is shared with the sticky submode -- declared up in the
+-- sticky-motion section above.
+local RAPID_COUNT = 2 -- quick taps in a row before it accelerates to the jump (2 = a fast double-tap, matches "jj"/"kk")
+local rapid_last = 0 -- vim.uv.now() of the previous j/k tap
+local rapid_run = 0 -- length of the current unbroken run of rapid taps
+
+function M.rapidMotion(dir)
+  local now = vim.uv.now()
+  rapid_run = (now - rapid_last <= RAPID_MS) and rapid_run + 1 or 1
+  rapid_last = now
+  if rapid_run >= RAPID_COUNT then
+    M.move_to_non_empty_line(dir == 'j' and STICKY_JUMP or -STICKY_JUMP) -- rapid burst -> fast 4-line jump
+  else
+    vim.cmd('normal! ' .. dir) -- lone tap -> one precise line
   end
 end
 
