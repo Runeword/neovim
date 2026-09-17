@@ -146,25 +146,27 @@ vim.keymap.set('i', '<C-b>', '<C-k>')
 
 --------------------------------- MOTIONS
 
--- j/k jump by 4 non-empty lines in normal mode (quickfix nav when it's open).
--- These used to route through <C-j>/<C-k>, but those chords now trigger treesj
--- (see treesj.lua), so the jump logic is inlined here. In visual and
--- operator-pending, j/k stay ordinary single-line motions (vj / dj / cj move one
--- line) while <C-j>/<C-k> keep the 4-line jump.
+-- j/k move one line in normal mode by default (quickfix nav when it's open), but a
+-- rapid burst of them (jj, kk, jk, kj, ...) accelerates to a 4-line smart jump --
+-- see functions.rapidMotion. The 4-line jump used to be the default and routed
+-- through <C-j>/<C-k>, but those chords now trigger treesj (see treesj.lua), so the
+-- jump logic is inlined here. In visual and operator-pending, j/k stay ordinary
+-- single-line motions (vj / dj / cj move one line) while <C-j>/<C-k> keep the
+-- 4-line jump.
 vim.keymap.set('n', 'k', function()
   if is_quickfix_open() then
     quickfix_nav('cprevious', 'clast')
   else
-    require('functions').move_to_non_empty_line(-4)
+    require('functions').rapidMotion('k')
   end
-end, { noremap = true, desc = 'Quickfix previous item, else jump up 4 non-empty lines' })
+end, { noremap = true, desc = 'Quickfix previous, else move up 1 line (rapid burst -> 4-line jump)' })
 vim.keymap.set('n', 'j', function()
   if is_quickfix_open() then
     quickfix_nav('cnext', 'cfirst')
   else
-    require('functions').move_to_non_empty_line(4)
+    require('functions').rapidMotion('j')
   end
-end, { noremap = true, desc = 'Quickfix next item, else jump down 4 non-empty lines' })
+end, { noremap = true, desc = 'Quickfix next, else move down 1 line (rapid burst -> 4-line jump)' })
 vim.keymap.set('x', 'k', 'gk')
 vim.keymap.set('x', 'j', 'gj')
 vim.keymap.set('x', '<C-k>', function()
@@ -189,7 +191,8 @@ end, { noremap = true })
 -- STICKY_ENTRY) enters it -- keeping each key's own behaviour -- as do gj / gk
 -- (nudging one line). While active, h/j/k/l move one step, every other key works
 -- as usual, and <Esc> exits (as do gj / gk, doing the 4-line smart jump on the way
--- out). See functions.stickyMotion / functions.armStickyEntry.
+-- out, or mashing j/k -- a rapid jj/kk/jk/kj double-tap). See functions.stickyMotion
+-- / functions.armStickyEntry.
 vim.keymap.set('n', 'gj', function()
   require('functions').stickyMotion('j')
 end, { desc = 'Sticky motion: down / smart-jump out' })
