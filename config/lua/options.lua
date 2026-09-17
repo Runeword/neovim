@@ -61,7 +61,6 @@ o.wrap = false
 -- -- nvim-treesitter/nvim-treesitter
 -- o.foldmethod = 'expr'
 -- o.foldexpr = 'nvim_treesitter#foldexpr()'
--- -- kevinhwang91/nvim-ufo
 -- o.foldcolumn = '1'
 -- o.foldlevel = 99
 -- o.foldlevelstart = 99
