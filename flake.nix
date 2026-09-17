@@ -271,8 +271,6 @@
           ln -s ${pkgs.vimPlugins.neotest-go}               $out/neotest-go
           ln -s ${pkgs.vimPlugins.nvim-nio}                 $out/nvim-nio
           ln -s ${pkgs.vimPlugins.hydra-nvim}               $out/hydra.nvim
-          ln -s ${pkgs.vimPlugins.nvim-ufo}                 $out/nvim-ufo
-          ln -s ${pkgs.vimPlugins.promise-async}            $out/promise-async
           ln -s ${pkgs.vimPlugins.yazi-nvim}                $out/yazi.nvim
           ln -s ${pkgs.vimPlugins.markview-nvim}            $out/markview.nvim
           ln -s ${pkgs.vimPlugins.nvim-lightbulb}           $out/nvim-lightbulb
