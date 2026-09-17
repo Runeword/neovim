@@ -332,18 +332,17 @@ end
 -- command, so `fw`, `rw`, `"wp` etc. -- where the letter is an argument -- do NOT
 -- trip it, and each key's existing plugin behaviour (spider w/b/e, asterisk */#,
 -- the custom `,` search, ...) is preserved by capturing and re-invoking its
--- original mapping. gj / gk enter too, nudging one line, and while active do the
--- smart 4-line jump + exit.
+-- original mapping.
 --
--- Leaving: <Esc> (an on_key watcher, live only while active), gj / gk, or mashing
+-- Leaving: <Esc> (an on_key watcher, live only while active), or mashing
 -- j/k -- a rapid jj/kk/jk/kj (the second tap within RAPID_MS of the first) does its
 -- step and then drops out. It is all non-blocking, so the cursor stays visible (cf.
 -- the getcharstr "busy" cursor bug, neovim/neovim#20793).
 local STICKY_KEYS = { 'h', 'j', 'k', 'l' } -- one-step moves while active
 -- Motions that enter the submode (wrapped by armStickyEntry). `ge` is covered by
--- its own two-key mapping; `gj`/`gk` are handled separately (stickyMotion).
+-- its own two-key mapping.
 local STICKY_ENTRY = { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
-local STICKY_JUMP = 4 -- lines for the gj/gk smart jump (matches global j/k)
+local STICKY_JUMP = 4 -- lines for the smart 4-line j/k jump (matches global j/k)
 local STICKY_ESC = vim.keycode('<Esc>')
 -- Shared "rapid burst" gap (ms): the largest pause between two j/k taps for them to
 -- count as mashed rather than deliberate. Used by rapidMotion (normal-mode accelerate)
@@ -426,18 +425,6 @@ function M.armStickyEntry()
       run()
       sticky_start()
     end, { desc = 'Sticky-enter (' .. key .. ')' })
-  end
-end
-
--- gj / gk (bound in mappings.lua): enter with a one-line nudge, or -- already
--- active -- do the smart 4-line jump and leave.
-function M.stickyMotion(first)
-  if sticky_active then
-    M.move_to_non_empty_line(first == 'j' and STICKY_JUMP or -STICKY_JUMP)
-    sticky_stop()
-  else
-    vim.cmd('normal! ' .. first)
-    sticky_start()
   end
 end
 
