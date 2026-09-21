@@ -60,6 +60,8 @@ vim.keymap.set('n', '<Leader>m', require('functions').displayMessages, { noremap
 
 vim.keymap.set('n', 'g<Enter>', require('functions').toggleFold, { desc = 'Toggle fold' })
 
+vim.keymap.set('n', '<Leader>C', require('functions').toggleComments, { desc = 'Toggle hide comments' })
+
 vim.keymap.set('t', '<Esc>', [[<C-\><C-n>]])
 vim.keymap.set('n', '<Esc>', require('functions').cancel)
 
@@ -146,27 +148,37 @@ vim.keymap.set('i', '<C-b>', '<C-k>')
 
 --------------------------------- MOTIONS
 
--- j/k move one line in normal mode by default (quickfix nav when it's open), but a
--- rapid burst of them (jj, kk, jk, kj, ...) accelerates to a 4-line smart jump --
--- see functions.rapidMotion. The 4-line jump used to be the default and routed
--- through <C-j>/<C-k>, but those chords now trigger treesj (see treesj.lua), so the
--- jump logic is inlined here. In visual and operator-pending, j/k stay ordinary
--- single-line motions (vj / dj / cj move one line) while <C-j>/<C-k> keep the
--- 4-line jump.
+-- j/k do the 4-line smart jump in normal mode by default (quickfix nav when it's open)
+-- -- one tap jumps, with no delay and no burst detection. Single-line j/k lives in the
+-- sticky "char mode" submode, which w/b/e/h/l/n/... and gj/gk arm (see the sticky-motion
+-- section in functions.lua): while it is active, j/k step one line at a time. The 4-line
+-- jump used to route through <C-j>/<C-k>, but those chords now trigger treesj (see
+-- treesj.lua), so it lives on j/k here. In visual and operator-pending, j/k stay ordinary
+-- single-line motions (vj / dj / cj move one line) while <C-j>/<C-k> keep the 4-line jump.
 vim.keymap.set('n', 'k', function()
   if is_quickfix_open() then
     quickfix_nav('cprevious', 'clast')
   else
-    require('functions').rapidMotion('k')
+    require('functions').move_to_non_empty_line(-4)
   end
-end, { noremap = true, desc = 'Quickfix previous, else move up 1 line (rapid burst -> 4-line jump)' })
+end, { noremap = true, desc = 'Quickfix previous, else jump up 4 lines' })
 vim.keymap.set('n', 'j', function()
   if is_quickfix_open() then
     quickfix_nav('cnext', 'cfirst')
   else
-    require('functions').rapidMotion('j')
+    require('functions').move_to_non_empty_line(4)
   end
-end, { noremap = true, desc = 'Quickfix next, else move down 1 line (rapid burst -> 4-line jump)' })
+end, { noremap = true, desc = 'Quickfix next, else jump down 4 lines' })
+-- gj/gk: step one line (real lines, skipping hidden-comment lines), then arm the sticky
+-- "char mode" submode just like w/e/b/... -- so after gj/gk, j/k keep stepping one line
+-- until you leave (Esc, or a rapid jj/kk). They sit in STICKY_ENTRY, so armStickyEntry
+-- (on VeryLazy) captures these jkStep maps and re-wraps each to also arm the submode.
+vim.keymap.set('n', 'gj', function()
+  require('functions').jkStep('j')
+end, { noremap = true, desc = 'Move down one line + enter char mode' })
+vim.keymap.set('n', 'gk', function()
+  require('functions').jkStep('k')
+end, { noremap = true, desc = 'Move up one line + enter char mode' })
 vim.keymap.set('x', 'k', 'gk')
 vim.keymap.set('x', 'j', 'gj')
 vim.keymap.set('x', '<C-k>', function()
@@ -187,7 +199,7 @@ vim.keymap.set('o', '<C-j>', function()
 end, { noremap = true })
 
 -- Sticky hjkl navigation submode (native replacement for the old hydra 'scroll'
--- hydra): a broad set of motions (h l w b e W B E ge $ ^ n N ; , . * #, see
+-- hydra): a broad set of motions (h l w b e W B E ge gj gk $ ^ n N ; , . * #, see
 -- STICKY_ENTRY) enters it -- keeping each key's own behaviour. While active,
 -- h/j/k/l move one step, every other key works as usual, and <Esc> exits (or
 -- mashing j/k -- a rapid jj/kk/jk/kj double-tap). See functions.armStickyEntry.
