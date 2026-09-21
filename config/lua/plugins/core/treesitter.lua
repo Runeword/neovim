@@ -9,6 +9,18 @@ if ts_to_queries then
   vim.opt.runtimepath:append(ts_to_queries)
 end
 
+-- nvim-treesitter (master layout) keeps its highlight/indent/fold queries under
+-- `runtime/queries/<lang>/`, but only the plugin root is on rtp, so Neovim finds
+-- the parsers (top-level `parser/*.so`) yet not the queries. Without the queries
+-- every Nix-bundled grammar parses but renders uncolored; only langs whose queries
+-- ship inside Neovim core (lua, c, vim, markdown, query, vimdoc) highlight. The
+-- flake exposes that `runtime/` dir as $NVIM_TS_QUERIES; add it so `queries/<lang>/
+-- highlights.scm` resolves for bash, python, json, yaml, nix, … as well.
+local ts_queries = vim.env.NVIM_TS_QUERIES
+if ts_queries then
+  vim.opt.runtimepath:append(ts_queries)
+end
+
 return {
   'nvim-treesitter/nvim-treesitter',
 
