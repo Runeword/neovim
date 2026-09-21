@@ -109,6 +109,40 @@ function M.jumpToLineEnd(callback)
   end
 end
 
+-------------------- Hidden comments
+
+-- Namespace holding the hide-comments conceal extmarks (populated by M.toggleComments,
+-- far below). Declared up here because the movement flow that follows consults it: a
+-- FULLY hidden comment line carries a `conceal_lines` extmark in this namespace, and
+-- such lines are dropped from the flow -- j/k and the smart jump skip them, so
+-- navigation never lands on (and thereby pops back open) a hidden comment.
+local comment_ns = vim.api.nvim_create_namespace('hide_comments')
+
+-- True when line `lnum` (1-indexed) is a fully-hidden comment line: comments are
+-- toggled off in this buffer AND the line carries a conceal_lines extmark. A no-op
+-- (single buffer-var read) whenever the toggle is off, so the movement flow pays
+-- nothing in the common case. Inline/trailing comments keep their code line and so
+-- are NOT hidden lines -- only whole-line conceals count.
+local function is_hidden_comment_line(lnum)
+  local buf = vim.api.nvim_get_current_buf()
+  if not vim.b[buf].comments_hidden then
+    return false
+  end
+  local marks = vim.api.nvim_buf_get_extmarks(buf, comment_ns, { lnum - 1, 0 }, { lnum - 1, -1 }, { details = true })
+  for _, m in ipairs(marks) do
+    if m[4] and m[4].conceal_lines then
+      return true
+    end
+  end
+  return false
+end
+
+-- A line the jump/step logic is allowed to land on: it has real text and is not a
+-- hidden comment line (those sit outside the movement flow).
+local function is_content_line(lnum)
+  return vim.fn.getline(lnum):find('%S') ~= nil and not is_hidden_comment_line(lnum)
+end
+
 -------------------- Move
 
 local MIN_STRIDE = 2 -- never make a sub-2-line hop (avoids stutter-stepping)
@@ -191,7 +225,7 @@ local function grid_stop(cur, stride, down, firstC, lastC)
   if down then
     local g = cur - ((cur - 1) % stride) + stride
     while g <= lastC do
-      if g - cur >= MIN_STRIDE and vim.fn.getline(g):find('%S') then
+      if g - cur >= MIN_STRIDE and is_content_line(g) then
         return g
       end
       g = g + stride
@@ -203,7 +237,7 @@ local function grid_stop(cur, stride, down, firstC, lastC)
     g = g - stride
   end
   while g >= firstC do
-    if cur - g >= MIN_STRIDE and vim.fn.getline(g):find('%S') then
+    if cur - g >= MIN_STRIDE and is_content_line(g) then
       return g
     end
     g = g - stride
@@ -214,8 +248,19 @@ end
 function M.move_to_non_empty_line(lines)
   local cur = vim.fn.line('.')
   local down = lines > 0
+  -- Content edges, skipping not just blanks but any leading/trailing run of hidden
+  -- comment lines (nextnonblank stops on them -- they carry text -- so step past).
   local firstC = vim.fn.nextnonblank(1)
+  while firstC ~= 0 and is_hidden_comment_line(firstC) do
+    firstC = vim.fn.nextnonblank(firstC + 1)
+  end
   local lastC = vim.fn.prevnonblank(vim.fn.line('$'))
+  while lastC ~= 0 and is_hidden_comment_line(lastC) do
+    lastC = vim.fn.prevnonblank(lastC - 1)
+  end
+  if firstC == 0 then
+    return -- nothing but blank / hidden-comment lines: nowhere in-flow to move
+  end
 
   -- Default landing: the nearest absolute grid stop in the travel direction (see
   -- grid_stop) -- an absolute grid makes <C-j>/<C-k> near-inverses (self-correcting
@@ -301,6 +346,18 @@ function M.move_to_non_empty_line(lines)
     end
   end
 
+  -- Hidden comment lines are outside the movement flow: a paragraph top, diagnostic
+  -- or hunk start can still name one, so if the chosen target is hidden, slide to the
+  -- next content line in the travel direction (the reverse-direction guard below turns
+  -- an overshoot past the last content line into a stay-put no-op).
+  if is_hidden_comment_line(target) then
+    local probe = target
+    repeat
+      probe = probe + (down and 1 or -1)
+    until probe < firstC or probe > lastC or is_content_line(probe)
+    target = (probe >= firstC and probe <= lastC) and probe or cur
+  end
+
   -- Never reverse direction: on trailing/leading blank lines the edge fallbacks
   -- can land on the far content edge (behind the cursor) -- stay put instead.
   if target == 0 or (down and target < cur) or (not down and target > cur) then
@@ -318,6 +375,28 @@ function M.move_to_non_empty_line(lines)
   -- line-scoped (no column), so they also fall back to the first non-blank.
   local col = diagnostic_col(target) or vim.fn.getline(target):find('%S') or 1
   vim.fn.cursor(target, col)
+end
+
+-- One-line j/k that steps over hidden-comment lines (part of the hide-comments
+-- feature) so a single move never rests on -- and thereby reveals -- one; they're
+-- outside the movement flow. Bail at the buffer edge (the move became a no-op) so a
+-- file ending in hidden comments can't loop forever.
+local function jk_step(dir)
+  vim.cmd('normal! ' .. dir)
+  while is_hidden_comment_line(vim.fn.line('.')) do
+    local before = vim.fn.line('.')
+    vim.cmd('normal! ' .. dir)
+    if vim.fn.line('.') == before then
+      break
+    end
+  end
+end
+
+-- Public one-line step, exposed for gj/gk (see mappings.lua): a deliberate single line
+-- for when you want to opt out of j/k's default 4-line jump. Shares jk_step's hidden-
+-- comment skipping, so it stays on the movement flow exactly like the sticky submode.
+function M.jkStep(dir)
+  jk_step(dir)
 end
 
 -------------------- Sticky motion
@@ -339,14 +418,15 @@ end
 -- step and then drops out. It is all non-blocking, so the cursor stays visible (cf.
 -- the getcharstr "busy" cursor bug, neovim/neovim#20793).
 local STICKY_KEYS = { 'h', 'j', 'k', 'l' } -- one-step moves while active
--- Motions that enter the submode (wrapped by armStickyEntry). `ge` is covered by
--- its own two-key mapping.
-local STICKY_ENTRY = { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
-local STICKY_JUMP = 4 -- lines for the smart 4-line j/k jump (matches global j/k)
+-- Motions that enter the submode (wrapped by armStickyEntry). `ge`/`gj`/`gk` are two-key
+-- motions; gj/gk carry their own jkStep mapping (mappings.lua) that armStickyEntry
+-- captures, so their single-line step survives the entry wrap.
+local STICKY_ENTRY =
+  { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', 'gj', 'gk', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
 local STICKY_ESC = vim.keycode('<Esc>')
--- Shared "rapid burst" gap (ms): the largest pause between two j/k taps for them to
--- count as mashed rather than deliberate. Used by rapidMotion (normal-mode accelerate)
--- and by the sticky submode (a rapid jj/kk/jk/kj leaves it). Lower = must mash faster.
+-- "Rapid burst" gap (ms): the largest pause between two j/k taps for them to count as
+-- mashed rather than deliberate. Used by the sticky submode -- a rapid jj/kk/jk/kj
+-- leaves it. Lower = must mash faster.
 local RAPID_MS = 100
 local sticky_ns = vim.api.nvim_create_namespace('sticky_motion')
 local sticky_active = false
@@ -371,13 +451,14 @@ local function sticky_start()
   sticky_active = true
   sticky_rapid_last = 0 -- fresh burst window, so the first j/k tap is never "rapid"
   -- Buffer-local hjkl (shadowing j/k's 4-line jump and default h/l) do the moves;
-  -- deleting them on exit restores the originals. j/k also watch for a rapid burst:
-  -- a second j/k within RAPID_MS (jj/kk/jk/kj) does its step and then leaves the
-  -- submode, so a quick mash escapes it. h/l move but break the j/k burst chain.
+  -- deleting them on exit restores the originals. j/k step one line (via jk_step, which
+  -- skips hidden-comment lines) and watch for a rapid burst: a second j/k within
+  -- RAPID_MS (jj/kk/jk/kj) does its step and then leaves the submode, so a quick mash
+  -- escapes it. h/l move but break the j/k burst chain.
   for _, key in ipairs(STICKY_KEYS) do
     vim.keymap.set('n', key, function()
-      vim.cmd('normal! ' .. key)
       if key == 'j' or key == 'k' then
+        jk_step(key)
         local now = vim.uv.now()
         local rapid = now - sticky_rapid_last <= RAPID_MS
         sticky_rapid_last = now
@@ -385,6 +466,7 @@ local function sticky_start()
           sticky_stop() -- rapid jj/kk/jk/kj -> leave the submode
         end
       else
+        vim.cmd('normal! ' .. key) -- h / l: one-step horizontal move
         sticky_rapid_last = 0 -- h / l break the j/k burst chain
       end
     end, { buffer = 0, desc = 'Sticky motion: ' .. key })
@@ -428,29 +510,6 @@ function M.armStickyEntry()
   end
 end
 
--- A lone / deliberate j/k moves one line (precise -- the mappings.lua handlers call
--- this). Mashing them -- a rapid burst jj, kk, jk, kj, ... each within RAPID_MS of
--- the last -- accelerates to the 4-line smart jump, so a quick flurry travels fast
--- while a single tap stays fine. The RAPID_COUNT-th quick tap is the first to jump
--- (rapidity is only knowable once a follow-up lands); the run keeps jumping until
--- the taps slow back down past RAPID_MS.
--- RAPID_MS (the burst gap) is shared with the sticky submode -- declared up in the
--- sticky-motion section above.
-local RAPID_COUNT = 2 -- quick taps in a row before it accelerates to the jump (2 = a fast double-tap, matches "jj"/"kk")
-local rapid_last = 0 -- vim.uv.now() of the previous j/k tap
-local rapid_run = 0 -- length of the current unbroken run of rapid taps
-
-function M.rapidMotion(dir)
-  local now = vim.uv.now()
-  rapid_run = (now - rapid_last <= RAPID_MS) and rapid_run + 1 or 1
-  rapid_last = now
-  if rapid_run >= RAPID_COUNT then
-    M.move_to_non_empty_line(dir == 'j' and STICKY_JUMP or -STICKY_JUMP) -- rapid burst -> fast 4-line jump
-  else
-    vim.cmd('normal! ' .. dir) -- lone tap -> one precise line
-  end
-end
-
 -------------------- Edit
 
 -- When the line is empty, move the cursor to the beginning of the line
@@ -481,6 +540,101 @@ function M.toggleFold()
     vim.api.nvim_feedkeys('zM', 'n', false)
     isFolded = false
   end
+end
+
+-------------------- Comments
+
+-- Toggle hiding every comment in the current buffer (per-buffer, so it's "in a
+-- file"). Treesitter finds each @comment capture across the main tree and every
+-- injected language; each is concealed by kind: a line that is nothing but a comment
+-- collapses away entirely (conceal_lines), a comment sharing its line with code has
+-- just its text concealed (and the whitespace gap before a trailing comment swallowed,
+-- so no dangling run is left). conceal only renders at conceallevel > 0, so we raise it
+-- while hidden and restore the prior value on toggle-off. The cursor's own line is
+-- always revealed (built-in conceal behaviour) -- navigate onto a hidden comment to
+-- read or edit it. State is a buffer var + a private namespace; edits made while
+-- hidden aren't re-scanned until the next toggle. (comment_ns -- the namespace these
+-- conceal extmarks live in -- is declared up by the Move section, which reads it to
+-- keep hidden comment lines out of the j/k movement flow.)
+
+-- Every comment node range in `buf` as { srow, scol, erow, ecol } (0-indexed, ecol
+-- exclusive). Walks the main parser and every injected child tree, matching the
+-- @comment / @comment.* highlight captures -- portable across languages, where the
+-- node type itself is line_comment / block_comment / ... per grammar. {} if the
+-- buffer has no treesitter parser.
+local function comment_ranges(buf)
+  local ranges = {}
+  local ok, parser = pcall(vim.treesitter.get_parser, buf)
+  if not ok or not parser then
+    return ranges
+  end
+  parser:parse(true)
+  local function walk(ltree)
+    local query = vim.treesitter.query.get(ltree:lang(), 'highlights')
+    if query then
+      for _, tree in pairs(ltree:trees()) do
+        for id, node in query:iter_captures(tree:root(), buf, 0, -1) do
+          local name = query.captures[id]
+          if name == 'comment' or name:sub(1, 8) == 'comment.' then
+            ranges[#ranges + 1] = { node:range() }
+          end
+        end
+      end
+    end
+    for _, child in pairs(ltree:children()) do
+      walk(child)
+    end
+  end
+  walk(parser)
+  return ranges
+end
+
+-- Place the conceal extmarks for every comment, one buffer line at a time: a line
+-- whose comment span has only whitespace on both sides is a pure comment line and is
+-- collapsed (conceal_lines); otherwise the comment shares the line with code, so only
+-- its text is concealed -- extended left over any whitespace right before it. Returns
+-- the number of comments found, so the caller can no-op when there are none.
+local function conceal_comments(buf)
+  local ranges = comment_ranges(buf)
+  for _, r in ipairs(ranges) do
+    local sr, sc, er, ec = r[1], r[2], r[3], r[4]
+    for lnum = sr, er do
+      local line = vim.api.nvim_buf_get_lines(buf, lnum, lnum + 1, false)[1] or ''
+      local scol = (lnum == sr) and sc or 0
+      local ecol = (lnum == er) and ec or #line
+      local left_clear = line:sub(1, scol):match('^%s*$') ~= nil
+      local right_clear = line:sub(ecol + 1):match('^%s*$') ~= nil
+      if left_clear and right_clear then
+        vim.api.nvim_buf_set_extmark(buf, comment_ns, lnum, 0, { conceal_lines = '' })
+      else
+        local cstart = left_clear and scol or #(line:sub(1, scol):gsub('%s+$', ''))
+        vim.api.nvim_buf_set_extmark(buf, comment_ns, lnum, cstart, {
+          end_row = lnum,
+          end_col = ecol,
+          conceal = '',
+        })
+      end
+    end
+  end
+  return #ranges
+end
+
+function M.toggleComments()
+  local buf = vim.api.nvim_get_current_buf()
+  local win = vim.api.nvim_get_current_win()
+  if vim.b[buf].comments_hidden then
+    vim.api.nvim_buf_clear_namespace(buf, comment_ns, 0, -1)
+    vim.wo[win].conceallevel = vim.b[buf].comments_prev_cl or 0
+    vim.b[buf].comments_hidden = false
+    return
+  end
+  if conceal_comments(buf) == 0 then
+    vim.notify('No comments to hide', vim.log.levels.INFO)
+    return
+  end
+  vim.b[buf].comments_prev_cl = vim.wo[win].conceallevel
+  vim.wo[win].conceallevel = 2
+  vim.b[buf].comments_hidden = true
 end
 
 ------------------- Buffers
