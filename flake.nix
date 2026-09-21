@@ -74,7 +74,14 @@
         # to regex :syntax for every non-builtin language. Rebuild it ourselves:
         # symlinkJoin the base plugin with all grammar plugins — each ships exactly
         # parser/<lang>.so, so merging them populates $out/parser and Neovim's
-        # vim.treesitter finds every grammar on rtp. Queries still come from base.
+        # vim.treesitter finds every grammar on rtp.
+        #
+        # Highlight/indent/fold queries live under $out/runtime/queries/<lang>/,
+        # NOT $out/queries/, so they are only found if the `runtime/` subdir is on
+        # rtp. Only the plugin root is, so parsers loaded but every grammar rendered
+        # uncolored (core-bundled langs like lua were the exception — their queries
+        # ship inside Neovim itself). We expose $out/runtime via NVIM_TS_QUERIES and
+        # append it to rtp in plugins/core/treesitter.lua.
         nvim-treesitter-with-grammars = pkgs.symlinkJoin {
           name = "vimplugin-nvim-treesitter-with-all-grammars";
           paths = [
@@ -301,6 +308,7 @@
           --set NVIM_NIX_PLUGINS_DIR ${nix-plugins} \
           --set NVIM_LAZY_NVIM_PATH ${pkgs.vimPlugins.lazy-nvim} \
           --set NVIM_TS_TEXTOBJECTS_QUERIES ${ts-textobjects-queries} \
+          --set NVIM_TS_QUERIES ${nvim-treesitter-with-grammars}/runtime \
           --set XDG_CONFIG_HOME "$out/.config"
         '';
 
