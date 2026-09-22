@@ -149,26 +149,38 @@ vim.keymap.set('i', '<C-b>', '<C-k>')
 --------------------------------- MOTIONS
 
 -- j/k do the 4-line smart jump in normal mode by default (quickfix nav when it's open)
--- -- one tap jumps, with no delay and no burst detection. Single-line j/k lives in the
--- sticky "char mode" submode, which w/b/e/h/l/n/... and gj/gk arm (see the sticky-motion
--- section in functions.lua): while it is active, j/k step one line at a time. The 4-line
--- jump used to route through <C-j>/<C-k>, but those chords now trigger treesj (see
--- treesj.lua), so it lives on j/k here. In visual and operator-pending, j/k stay ordinary
--- single-line motions (vj / dj / cj move one line) while <C-j>/<C-k> keep the 4-line jump.
+-- -- one tap jumps, with no delay and no burst detection. A numeric count opts out: [n]j
+-- / [n]k moves a literal n lines (so relativenumber jumps like 5j work) AND arms the
+-- sticky "char mode" submode, so the follow-up j/k fine-tune one line at a time -- the
+-- same submode that w/b/e/h/l/n/... and gj/gk arm (see the sticky-motion section in
+-- functions.lua). The 4-line jump used to route through <C-j>/<C-k>, but those chords now
+-- trigger treesj (see treesj.lua), so it lives on j/k here. In visual and operator-pending,
+-- j/k stay ordinary single-line motions (vj / dj / cj move one line) while <C-j>/<C-k>
+-- keep the 4-line jump.
 vim.keymap.set('n', 'k', function()
   if is_quickfix_open() then
     quickfix_nav('cprevious', 'clast')
+  elseif vim.v.count > 0 then
+    -- [count]k = literal n lines (e.g. relativenumber 5k), then enter char mode so the
+    -- follow-up j/k step one line at a time.
+    vim.cmd('normal! ' .. vim.v.count .. 'k')
+    require('functions').stickyStart()
   else
     require('functions').move_to_non_empty_line(-4)
   end
-end, { noremap = true, desc = 'Quickfix previous, else jump up 4 lines' })
+end, { noremap = true, desc = 'Quickfix previous, else [count] lines up + char mode, else jump up 4 lines' })
 vim.keymap.set('n', 'j', function()
   if is_quickfix_open() then
     quickfix_nav('cnext', 'cfirst')
+  elseif vim.v.count > 0 then
+    -- [count]j = literal n lines (e.g. relativenumber 5j), then enter char mode so the
+    -- follow-up j/k step one line at a time.
+    vim.cmd('normal! ' .. vim.v.count .. 'j')
+    require('functions').stickyStart()
   else
     require('functions').move_to_non_empty_line(4)
   end
-end, { noremap = true, desc = 'Quickfix next, else jump down 4 lines' })
+end, { noremap = true, desc = 'Quickfix next, else [count] lines down + char mode, else jump down 4 lines' })
 -- gj/gk: step one line (real lines, skipping hidden-comment lines), then arm the sticky
 -- "char mode" submode just like w/e/b/... -- so after gj/gk, j/k keep stepping one line
 -- until you leave (Esc, or a rapid jj/kk). They sit in STICKY_ENTRY, so armStickyEntry
@@ -212,7 +224,11 @@ vim.api.nvim_create_autocmd('User', {
   end,
 })
 
-vim.keymap.set('n', '0', 'g0')
+-- 0 -> g0 (start of the display line) when pressed bare, but a plain count digit while a
+-- count is being entered, so 10j / 20G work now that digits are free counts again.
+vim.keymap.set('n', '0', function()
+  return vim.v.count == 0 and 'g0' or '0'
+end, { expr = true, desc = 'Start of display line, or count digit mid-count' })
 
 -- vim.keymap.set('n', '$', function()
 --   vim.fn.execute('normal! g$')
