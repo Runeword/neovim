@@ -479,6 +479,13 @@ local function sticky_start()
   end, sticky_ns)
 end
 
+-- Public entry to the submode for callers that do their own motion first, then want char
+-- mode armed -- e.g. a counted [n]j/[n]k in mappings.lua, matching how w/e/b/gj/gk arm it.
+-- Idempotent (sticky_start no-ops when already active).
+function M.stickyStart()
+  sticky_start()
+end
+
 -- Wrap every STICKY_ENTRY motion so it runs its current behaviour and then arms
 -- the submode. Call once from a `User VeryLazy` autocmd (see mappings.lua): spider
 -- / asterisk / ... set their maps during startup, after mappings.lua, so we
