@@ -12,9 +12,11 @@ return {
         zsh = { 'shfmt', 'shellharden' }, -- 'beautysh'
         python = { 'isort', 'black' },
         javascript = { 'prettier' },
+        javascriptreact = { 'prettier' },
         typescript = { 'prettier' },
         html = { 'prettier' },
         typescriptreact = { 'prettier' },
+        vue = { 'prettier' },
         lua = { 'stylua' },
       },
 
