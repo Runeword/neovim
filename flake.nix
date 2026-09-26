@@ -267,8 +267,18 @@
           ln -s ${pkgs.vimPlugins.markview-nvim}            $out/markview.nvim
         '';
 
+        # vue-language-server 3 only serves the template/style side of .vue files;
+        # ts_ls handles the TypeScript side through @vue/typescript-plugin, which
+        # tsserver resolves from `<location>/node_modules`. nixpkgs ships that plugin
+        # inside the vue-language-server package (a pnpm workspace symlink), so we
+        # expose the location as NVIM_VUE_LANGUAGE_SERVER_PATH for
+        # plugins/core/lspconfig.lua. The wrapper build fails if the plugin moves.
+        vue-language-server-path = "${pkgs.vue-language-server}/lib/language-tools/packages/language-server";
+
         wrapper = with pkgs; ''
           rm $out/bin/nvim
+          [ -e ${vue-language-server-path}/node_modules/@vue/typescript-plugin ] \
+            || { echo "@vue/typescript-plugin not found in ${vue-language-server-path}" >&2; exit 1; }
           makeWrapper ${neovim-override}/bin/nvim $out/bin/nvim --prefix PATH : ${
             lib.makeBinPath [
               fzf
@@ -278,6 +288,7 @@
               eslint
               eslint_d
               biome
+              prettier
               vue-language-server
               pyright
               vscode-langservers-extracted
@@ -309,6 +320,7 @@
           --set NVIM_LAZY_NVIM_PATH ${pkgs.vimPlugins.lazy-nvim} \
           --set NVIM_TS_TEXTOBJECTS_QUERIES ${ts-textobjects-queries} \
           --set NVIM_TS_QUERIES ${nvim-treesitter-with-grammars}/runtime \
+          --set NVIM_VUE_LANGUAGE_SERVER_PATH ${vue-language-server-path} \
           --set XDG_CONFIG_HOME "$out/.config"
         '';
 
