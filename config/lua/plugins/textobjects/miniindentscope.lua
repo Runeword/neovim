@@ -26,8 +26,6 @@ return {
         object_scope_with_border = 'ai',
         goto_top = '',
         goto_bottom = '',
-        -- goto_top = "<S-CR>",
-        -- goto_bottom = "<CR>",
       },
 
       options = {
