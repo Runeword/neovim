@@ -53,16 +53,6 @@ return {
 
     local cmp_exists, cmp_nvim_lsp = pcall(require, 'cmp_nvim_lsp')
 
-    local function safe_root_dir(markers)
-      return function(fname)
-        local root = vim.fs.root(fname, markers)
-        if type(root) == 'table' then
-          return root[1]
-        end
-        return root
-      end
-    end
-
     local function set_config(override_opts)
       local default_opts = {
         capabilities = cmp_exists and cmp_nvim_lsp.default_capabilities() or {}, -- hrsh7th/nvim-cmp
@@ -77,19 +67,9 @@ return {
     vim.lsp.enable('yamlls')
     vim.lsp.config('ccls', set_config())
     vim.lsp.enable('ccls')
-    vim.lsp.config(
-      'eslint',
-      set_config({
-        root_dir = safe_root_dir({
-          'package.json',
-          '.eslintrc',
-          '.eslintrc.js',
-          '.eslintrc.json',
-          '.eslintrc.yaml',
-          '.eslintrc.yml',
-        }),
-      })
-    )
+    -- Root detection comes from nvim-lspconfig (eslint only attaches where an ESLint
+    -- config exists). A custom root_dir must call on_dir(root), not return the root.
+    vim.lsp.config('eslint', set_config())
     vim.lsp.enable('eslint')
     vim.lsp.config('jsonls', set_config())
     vim.lsp.enable('jsonls')
@@ -125,12 +105,24 @@ return {
     -- vim.lsp.config('harper_ls', set_config({ filetypes = { 'markdown', }, }))
     -- vim.lsp.enable('harper_ls')
 
+    -- vue_ls (v3) only serves the template/style side of .vue files and forwards the
+    -- TypeScript side to ts_ls, which needs @vue/typescript-plugin for it. flake.nix
+    -- points NVIM_VUE_LANGUAGE_SERVER_PATH at the plugin's location inside the Nix
+    -- vue-language-server package.
     vim.lsp.config(
       'ts_ls',
       set_config({
         on_attach = on_attach_server(false),
-        autostart = true,
-        root_dir = safe_root_dir({ 'package.json', 'tsconfig.json', 'jsconfig.json' }),
+        filetypes = { 'javascript', 'javascriptreact', 'typescript', 'typescriptreact', 'vue' },
+        init_options = {
+          plugins = {
+            {
+              name = '@vue/typescript-plugin',
+              location = vim.env.NVIM_VUE_LANGUAGE_SERVER_PATH,
+              languages = { 'vue' },
+            },
+          },
+        },
       })
     )
     vim.lsp.enable('ts_ls')
