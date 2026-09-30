@@ -3,13 +3,14 @@
 -- response is just bare locations with no such tag, so we read the source line
 -- and derive it ourselves. This runs as the section `filter` (trouble accepts a
 -- function filter — see trouble/filter.lua) which fires before grouping/sorting,
--- so the `ref_kind` we stash on each item drives the groups configured below.
+-- so the `ref_kind` we stash on each item marks the calls in the list below. Each
+-- item also gets the widest line number in the list, to right-align the numbers.
 local function classify_refs(items)
   local Util = require('trouble.util')
 
   -- Read each reference's line once, batched per file. Util.get_lines reads
   -- from disk when the buffer isn't loaded, so cross-file refs work too.
-  local by_file = {}
+  local by_file, lnum_width = {}, 1
   for _, item in ipairs(items) do
     local f = by_file[item.filename]
     if not f then
@@ -18,6 +19,7 @@ local function classify_refs(items)
     end
     f.rows[#f.rows + 1] = item.end_pos[1]
     f.items[#f.items + 1] = item
+    lnum_width = math.max(lnum_width, #tostring(item.pos[1]))
   end
 
   for name, f in pairs(by_file) do
@@ -41,10 +43,190 @@ local function classify_refs(items)
         or before:match('^%s*func%s')
         or before:match('^%s*fn%s')
       item.ref_kind = (is_call and not is_def) and 'Call' or 'Reference'
+      item.lnum_width = lnum_width
     end
   end
 
   return items
+end
+
+-- The refs_follow list keeps a preview pane open under it. In the code it shows the
+-- definition of the symbol under the cursor when that is in another file, and stays
+-- blank when it's in this one (a jump away) or there is none; while you browse the
+-- list, the reference under the list's cursor. Trouble's own preview only lives while
+-- its list is focused, and it shows an open file's real buffer, so its highlight would
+-- land in the code window too: the pane shows a scratch copy instead, labelled with
+-- the file and line it comes from.
+local pane = {} -- win, buf, what it shows (file, tick of the file's buffer, key), def, def_key
+local pane_ns = vim.api.nvim_create_namespace('refs_follow.pane')
+
+-- The open refs_follow view, if any
+local function refs_view()
+  for _, v in ipairs(require('trouble.view').get({ open = true, mode = 'refs_follow' })) do
+    if v.view.win:valid() then
+      return v.view
+    end
+  end
+end
+
+local function scratch_buf()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = 'wipe'
+  return buf
+end
+
+-- A scratch copy of the item's file (its buffer if loaded, else read from disk) with
+-- the same highlighting, kept while the pane shows that file and its buffer is unchanged
+local function pane_buffer(item)
+  local loaded = item.buf and vim.api.nvim_buf_is_loaded(item.buf)
+  local tick = loaded and vim.api.nvim_buf_get_changedtick(item.buf) or 0
+  if pane.file == item.filename and pane.tick == tick and pane.buf and vim.api.nvim_buf_is_valid(pane.buf) then
+    return pane.buf
+  end
+  local buf = scratch_buf()
+  local lines = require('trouble.util').get_lines({ buf = item.buf, path = item.filename })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines or {})
+  local ft = loaded and vim.bo[item.buf].filetype or vim.filetype.match({ filename = item.filename, buf = buf })
+  if ft and ft ~= '' then
+    local lang = vim.treesitter.language.get_lang(ft)
+    if not (lang and pcall(vim.treesitter.start, buf, lang)) then
+      vim.bo[buf].syntax = ft
+    end
+  end
+  pane.buf, pane.file, pane.tick = buf, item.filename, tick
+  return buf
+end
+
+-- Point the pane at `item`, opening it under the list first (blank). `false` blanks it,
+-- nil keeps what it shows.
+local function pane_show(list, item)
+  if not (pane.win and vim.api.nvim_win_is_valid(pane.win)) then
+    pane.win = vim.api.nvim_open_win(scratch_buf(), false, {
+      split = 'below',
+      win = list,
+      height = math.max(math.floor(vim.api.nvim_win_get_height(list) / 2), 1),
+      noautocmd = true,
+    })
+    pane.key = 'blank'
+    vim.w[pane.win].trouble = { mode = 'refs_follow.pane' } -- so trouble never takes it for the code window
+    local wo = vim.wo[pane.win]
+    wo.number, wo.cursorline, wo.signcolumn, wo.foldcolumn, wo.wrap = true, true, 'no', '0', false
+    wo.winfixheight, wo.winhighlight = true, 'CursorLine:TroubleCursorLine'
+  end
+  if item == nil then
+    return
+  elseif item == false then
+    if pane.key ~= 'blank' then
+      require('trouble.util').noautocmd(function()
+        vim.api.nvim_win_set_buf(pane.win, scratch_buf())
+      end)
+      vim.wo[pane.win].winbar = ''
+      pane.key = 'blank'
+    end
+    return
+  end
+  local buf = pane_buffer(item)
+  local key = item.pos[1] .. ':' .. item.pos[2]
+  if vim.api.nvim_win_get_buf(pane.win) == buf and pane.key == key then
+    return
+  end
+  require('trouble.util').noautocmd(function()
+    vim.api.nvim_win_set_buf(pane.win, buf)
+  end)
+  vim.api.nvim_buf_clear_namespace(buf, pane_ns, 0, -1)
+  vim.api.nvim_buf_set_extmark(buf, pane_ns, item.pos[1] - 1, item.pos[2], {
+    end_row = item.end_pos[1] - 1,
+    end_col = item.end_pos[2],
+    hl_group = 'TroublePreview',
+    strict = false,
+  })
+  pcall(vim.api.nvim_win_set_cursor, pane.win, item.pos)
+  vim.api.nvim_win_call(pane.win, function()
+    vim.cmd('normal! zz')
+  end)
+  local path = vim.fn.fnamemodify(item.filename, ':~:.'):gsub('%%', '%%%%')
+  vim.wo[pane.win].winbar = ' ' .. path .. ':' .. item.pos[1]
+  pane.key = key
+end
+
+-- Where the cursor is, text version included: what a definition lookup is asked for
+local function cursor_key()
+  local buf, cursor = vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)
+  return table.concat({ buf, vim.api.nvim_buf_get_changedtick(buf), cursor[1], cursor[2] }, ':')
+end
+
+-- Update the pane: while you browse the list, the reference under its cursor (or the
+-- first one below a file header); in the code, what the definition lookup for the
+-- cursor found, once it's in. Closes the pane once the list is gone.
+local function pane_sync()
+  local view = refs_view()
+  if not view then
+    if pane.win and vim.api.nvim_win_is_valid(pane.win) then
+      vim.api.nvim_win_close(pane.win, true)
+    end
+    pane.win = nil
+    return
+  end
+  local list = view.win.win
+  if vim.api.nvim_get_current_win() ~= list then
+    local def -- nil until the lookup for this very cursor position is in
+    if pane.def_key == cursor_key() then
+      def = pane.def
+    end
+    return pane_show(list, def)
+  end
+  local item
+  for row = vim.api.nvim_win_get_cursor(list)[1], vim.api.nvim_buf_line_count(view.win.buf) do
+    item = view:at({ row, 0 }).item
+    if item then
+      break
+    end
+  end
+  pane_show(list, item)
+end
+
+-- Look up the definition of the symbol under the cursor for the pane (the LSP's
+-- go-to-definition): pane.def becomes the definition when it's in another file, else
+-- false (in this file, or none). The pane keeps what it shows until the answer is in.
+local function pane_definition()
+  local key = cursor_key()
+  if key == pane.def_key then
+    return pane_sync()
+  end
+  pane.def_key, pane.def = key, nil
+  local buf, win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+  -- A request no attached server can answer would raise an error notification
+  if #vim.lsp.get_clients({ bufnr = buf, method = 'textDocument/definition' }) == 0 then
+    pane.def = false
+    return pane_sync()
+  end
+  vim.lsp.buf_request_all(buf, 'textDocument/definition', function(client)
+    return vim.lsp.util.make_position_params(win, client.offset_encoding)
+  end, function(results)
+    if pane.def_key ~= key then
+      return
+    end
+    pane.def = false
+    for id, res in pairs(results) do
+      local client = vim.lsp.get_client_by_id(id)
+      local locs = res.result and (vim.islist(res.result) and res.result or { res.result }) or {}
+      local it = client and locs[1] and vim.lsp.util.locations_to_items({ locs[1] }, client.offset_encoding)[1]
+      if it then
+        -- Same buffer = same file (buffers are matched by file, symlinks included)
+        local def_buf = vim.uri_to_bufnr(locs[1].uri or locs[1].targetUri)
+        if def_buf ~= buf then
+          pane.def = {
+            filename = it.filename,
+            buf = def_buf,
+            pos = { it.lnum, it.col - 1 },
+            end_pos = { it.end_lnum, it.end_col - 1 },
+          }
+        end
+        break
+      end
+    end
+    pane_sync()
+  end)
 end
 
 -- <Left>/<Right> hop to the previous/next symbol that has references, opening the
@@ -204,14 +386,15 @@ local function hop_on(job)
       job.at = pos
       job.steps = job.steps - 1
       -- Re-target the panel, opening it if needed (and again once it has opened, in case
-      -- we landed meanwhile): its CursorHold refresh fires once per typed key, possibly
-      -- before this answer came in
+      -- we landed meanwhile), and its pane's definition: their CursorHold updates fire
+      -- once per typed key, possibly before this answer came in
       local view = require('trouble').open({ mode = 'refs_follow', refresh = false })
       if view then
         view:wait(function()
           view:refresh()
         end)
       end
+      pane_definition()
       if job.steps == 0 then
         hop_job = nil
         return
@@ -275,29 +458,29 @@ return {
     },
   },
   opts = {
-    -- Header labels for the Call/Reference split below. Custom formatters take
-    -- precedence over trouble's built-ins (trouble/format.lua); the group header
-    -- node inherits `ref_kind` from the first item in the group.
+    -- Fields for the refs_follow items below. Custom formatters take precedence
+    -- over trouble's built-ins (trouble/format.lua).
     formatters = {
+      -- 󰊕 in front of the calls (see classify_refs), blanks in front of the other
+      -- references, so the line numbers stay aligned
       ref_kind = function(ctx)
-        if ctx.item.ref_kind == 'Call' then
-          return { text = '󰊕 Calls', hl = 'Function' }
-        elseif ctx.item.ref_kind == 'Reference' then
-          return { text = '󰌹 References', hl = 'Comment' }
-        end
+        return ctx.item.ref_kind == 'Call' and { text = '󰊕 ', hl = 'Function' } or '  '
+      end,
+      -- The reference's line number, right-aligned to the widest in the list
+      lnum = function(ctx)
+        return { text = ('%' .. (ctx.item.lnum_width or 1) .. 'd'):format(ctx.item.pos[1]), hl = 'LineNr' }
       end,
     },
     modes = {
       -- Persistent right-hand split that re-runs `textDocument/references`
       -- for whatever symbol the cursor rests on (refreshes on CursorHold),
-      -- split into `Calls` and `References` groups, then by file.
+      -- grouped by file, with a preview pane under it (see pane_sync).
       refs_follow = {
         mode = 'lsp_references',
-        -- Keep the reference under the cursor in the results. lsp_base defaults
-        -- to include_current=false, which drops *every* reference on the cursor's
-        -- line -- so resting on a call site would hide the whole Calls group,
-        -- leaving only References (and vice-versa). Keeping it means both groups
-        -- stay visible as the cursor moves.
+        -- Keep the references on the cursor's line. lsp_base defaults to
+        -- include_current=false, which drops *every* reference on that line: the
+        -- one under the cursor could then never be highlighted, and the list would
+        -- reshuffle as the cursor moves from one reference to another.
         params = { include_current = true },
         auto_refresh = true, -- re-fetch as the cursor moves in the code window
         auto_jump = false, -- don't teleport when a symbol has a single reference
@@ -305,18 +488,25 @@ return {
         warn_no_results = false, -- stay quiet when the cursor isn't on a symbol
         open_no_results = true, -- toggle open even before landing on a symbol
         win = { type = 'split', position = 'right', size = 0.35 },
-        title = false, -- Calls/References groups are the top level; skip a title
+        title = false, -- the file groups are the top level; skip a title
         filter = classify_refs,
-        -- 'Call' sorts before 'Reference', so the Calls group renders on top.
-        sort = { 'ref_kind', 'filename', 'pos' },
+        sort = { { buf = 0 }, 'filename', 'pos' }, -- the current file's group first
         groups = {
-          { 'ref_kind', format = '{ref_kind} {count}' },
           { 'filename', format = '{file_icon} {filename} {count}' },
         },
+        format = '{ref_kind}{lnum} {text:ts}',
+        -- The pane is the preview here: no trouble preview on top of it
+        auto_preview = false,
+        keys = { p = false, P = false },
       },
     },
     keys = {
       ['<esc>'] = 'close',
+      -- One reference at a time (j/k would otherwise do this config's 4-line jump)
+      j = 'next',
+      k = 'prev',
+      ['<down>'] = 'next',
+      ['<up>'] = 'prev',
     },
     win = {
       wo = {
@@ -324,4 +514,60 @@ return {
       },
     },
   },
+  config = function(_, opts)
+    require('trouble').setup(opts)
+
+    -- Re-sync the refs_follow pane after every redraw of its list (the list opened,
+    -- re-rendered, or its cursor moved, trouble's follow included), and when a window
+    -- closes (maybe the list). Trouble has no events for these.
+    local pending = false
+    local function sync()
+      if not pending then
+        pending = true
+        vim.schedule(function()
+          pending = false
+          pane_sync()
+        end)
+      end
+    end
+    vim.api.nvim_set_decoration_provider(pane_ns, {
+      on_win = function(_, win)
+        local t = vim.w[win].trouble
+        if t and t.mode == 'refs_follow' then
+          sync()
+        end
+        return false
+      end,
+    })
+    vim.api.nvim_create_autocmd('WinClosed', { callback = sync })
+
+    -- In the code, look up the definition for the pane whenever the cursor settles
+    vim.api.nvim_create_autocmd('CursorHold', {
+      callback = function()
+        if vim.bo.buftype == '' and refs_view() then
+          pane_definition()
+        end
+      end,
+    })
+
+    -- Entering the code or the list switches the pane to the definition or the list's
+    -- selection. The pane itself is for looking only: landing in it (<C-Right> from the
+    -- lower half of the screen, a click) moves on to the list.
+    vim.api.nvim_create_autocmd('WinEnter', {
+      callback = function()
+        local view = refs_view()
+        if not view then
+          return
+        elseif vim.api.nvim_get_current_win() == pane.win then
+          vim.schedule(function()
+            pcall(vim.api.nvim_set_current_win, view.win.win)
+          end)
+        elseif vim.bo.buftype == '' then
+          pane_definition()
+        else
+          sync()
+        end
+      end,
+    })
+  end,
 }
