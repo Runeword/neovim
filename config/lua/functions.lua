@@ -743,6 +743,8 @@ function M.displayMessages()
   }
 
   vim.api.nvim_set_option_value('modifiable', false, { buf = buffer_id })
+  -- However the float gets closed, free the 'messages' name for the next call (E95 otherwise)
+  vim.api.nvim_set_option_value('bufhidden', 'wipe', { buf = buffer_id })
   vim.api.nvim_open_win(buffer_id, true, window_opts)
 end
 
