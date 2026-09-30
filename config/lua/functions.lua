@@ -646,9 +646,9 @@ end
 
 ------------------- Buffers
 
--- Wipe the buffers shown in the current tabpage (closing it if there are others), quit vim if no
--- other buffer is left. Never wipe a buffer on screen: switch away first, as snacks.bufdelete and
--- mini.bufremove do. A buffer wiped while displayed flashes in regex-syntax colors, as Nvim's
+-- Close the buffers shown in the current tabpage (and the tabpage if there are others), quit vim if
+-- no other buffer is left. Never delete a buffer on screen: switch away first, as snacks.bufdelete
+-- and mini.bufremove do. A buffer deleted while displayed flashes in regex-syntax colors, as Nvim's
 -- nvim.diagnostic.status hook redraws it mid-teardown, after treesitter has let go.
 function M.wipe_active_buffers()
   -- A float can't host the next buffer: just close it
@@ -681,9 +681,15 @@ function M.wipe_active_buffers()
     return
   end
 
+  -- :bdelete files, which keeps their marks for when they're reopened; wipe the rest (help,
+  -- quickfix, terminals, scratch and unnamed buffers), which has nothing worth keeping
   for buffer in pairs(shown) do
     if vim.api.nvim_buf_is_valid(buffer) and #vim.fn.win_findbuf(buffer) == 0 then
-      vim.api.nvim_buf_delete(buffer, { force = true })
+      if vim.bo[buffer].buflisted and vim.bo[buffer].buftype == '' and vim.api.nvim_buf_get_name(buffer) ~= '' then
+        vim.cmd('bdelete! ' .. buffer)
+      else
+        vim.api.nvim_buf_delete(buffer, { force = true })
+      end
     end
   end
 end
