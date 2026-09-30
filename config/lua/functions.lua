@@ -646,34 +646,45 @@ end
 
 ------------------- Buffers
 
--- Wipe all the active buffers, quit vim if it's the last buffer
+-- Wipe the buffers shown in the current tabpage (closing it if there are others), quit vim if no
+-- other buffer is left. Never wipe a buffer on screen: switch away first, as snacks.bufdelete and
+-- mini.bufremove do. A buffer wiped while displayed flashes in regex-syntax colors, as Nvim's
+-- nvim.diagnostic.status hook redraws it mid-teardown, after treesitter has let go.
 function M.wipe_active_buffers()
-  local buffers_count = 0
-  local active_buffers = {}
+  -- A float can't host the next buffer: just close it
+  if vim.api.nvim_win_get_config(0).relative ~= '' then
+    vim.api.nvim_buf_delete(0, { force = true })
+    return
+  end
 
-  for _, buffer in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(buffer) then
-      if vim.api.nvim_get_option_value('buflisted', { buf = buffer }) then
-        buffers_count = buffers_count + 1
-      end
+  local shown = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    shown[vim.api.nvim_win_get_buf(win)] = true
+  end
 
-      if vim.fn.bufwinid(buffer) ~= -1 then
-        table.insert(active_buffers, buffer)
-      end
+  -- The alternate buffer if it survives, else the last used survivor
+  local alternate, next_buffer, best = vim.fn.bufnr('#'), nil, -1
+  for _, info in ipairs(vim.fn.getbufinfo({ buflisted = 1 })) do
+    local rank = info.bufnr == alternate and math.huge or info.lastused
+    if not shown[info.bufnr] and rank > best then
+      next_buffer, best = info.bufnr, rank
     end
   end
 
-  -- print(vim.inspect(active_buffers))
-
-  for _, active_buffer in ipairs(active_buffers) do
-    -- Check if buffer is still valid before attempting to delete
-    if vim.api.nvim_buf_is_valid(active_buffer) then
-      vim.api.nvim_buf_delete(active_buffer, { force = true })
-    end
+  if vim.fn.tabpagenr('$') > 1 then
+    vim.cmd('tabclose!')
+  elseif next_buffer then
+    vim.cmd('silent! only!')
+    vim.api.nvim_win_set_buf(0, next_buffer)
+  else
+    vim.cmd('quitall!')
+    return
   end
 
-  if buffers_count == 1 then
-    vim.cmd('quit!')
+  for buffer in pairs(shown) do
+    if vim.api.nvim_buf_is_valid(buffer) and #vim.fn.win_findbuf(buffer) == 0 then
+      vim.api.nvim_buf_delete(buffer, { force = true })
+    end
   end
 end
 
