@@ -177,8 +177,9 @@ vim.api.nvim_create_autocmd('CursorMoved', {
     vim.api.nvim_buf_clear_namespace(0, searchcount_ns, 0, -1)
     -- Bound the search: cap the count and time-limit it so huge files/match
     -- sets don't add cursor-movement latency.
+    -- With no last search pattern yet (fresh shada) it returns an empty dict.
     local ok, result = pcall(vim.fn.searchcount, { maxcount = 999, timeout = 100 })
-    if not ok or result.total == 0 then
+    if not ok or (result.total or 0) == 0 then
       searchcount_active = false
       return
     end
