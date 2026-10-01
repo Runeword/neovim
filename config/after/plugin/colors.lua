@@ -110,9 +110,7 @@ local function apply()
   vim.api.nvim_set_hl(0, 'MiniIndentscopeSymbol', { bg = 'none', fg = '#222b66' })
   vim.api.nvim_set_hl(0, 'MiniIndentscopeSymbolOff', { bg = 'none', fg = '#222b66' })
 
-  vim.api.nvim_set_hl(0, 'TroubleNormal', { link = 'Normal' })
-  vim.api.nvim_set_hl(0, 'TroubleNormalNC', { link = 'Normal' })
-  vim.api.nvim_set_hl(0, 'TroubleCursorLine', { bg = '#1e2633' })
+  vim.api.nvim_set_hl(0, 'RefsCursorLine', { bg = '#1e2633' }) -- the references panel's (myplugins/refs.nvim)
 
   vim.api.nvim_set_hl(0, 'NotifyERRORBorder', { link = 'FloatBorder' })
   vim.api.nvim_set_hl(0, 'NotifyWARNBorder', { link = 'FloatBorder' })
