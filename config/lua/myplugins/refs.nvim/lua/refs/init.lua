@@ -9,6 +9,7 @@ local panel = require('refs.panel')
 local M = {}
 
 M.toggle = panel.toggle -- the panel
+M.focus = panel.focus -- the panel, moving into it
 M.hop = hop.hop -- dir: 1 next, -1 previous
 
 function M.setup()
