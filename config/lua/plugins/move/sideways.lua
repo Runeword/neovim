@@ -7,7 +7,7 @@ return {
   event = 'VeryLazy',
 
   config = function()
-    -- <Left>/<Right> hop between symbols with references (plugins/ui/trouble.lua)
+    -- <Left>/<Right> hop between symbols with references (plugins/ui/refs.lua)
     -- vim.keymap.set('n', '<Left>', '<cmd>SidewaysJumpLeft<CR>')
     -- vim.keymap.set('n', '<Right>', '<cmd>SidewaysJumpRight<CR>')
     vim.keymap.set('n', '<S-Left>', '<cmd>SidewaysLeft<CR>')
