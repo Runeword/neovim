@@ -134,7 +134,12 @@ vim.keymap.set('n', 'V', require('functions').visualSelectToEndOfline)
 ----------------------------------- READLINE
 
 vim.keymap.set('i', '<C-a>', '<ESC>I')
+-- neocodeium.lua takes <C-e> over: it accepts a suggestion's line, else does this.
 vim.keymap.set('i', '<C-e>', '<END>')
+vim.keymap.set('i', '<C-b>', '<Left>')
+vim.keymap.set('i', '<C-f>', '<Right>')
+vim.keymap.set('i', '<M-b>', '<S-Left>')
+vim.keymap.set('i', '<M-f>', '<S-Right>')
 -- Kill to end of line, staying in insert (so it also works with the completion
 -- menu open) and black-holed (honours the delete-to-"_ convention). <C-\><C-o>
 -- instead of <C-o> because <C-o>D pulls the cursor back at EOL and eats a char.
@@ -144,7 +149,7 @@ vim.keymap.set('i', '<C-k>', '<C-\\><C-o>"_D')
 vim.keymap.set('i', '<C-j>', '<C-g>u<C-u>')
 vim.keymap.set('i', '<C-u>', '<C-o>S')
 -- Digraphs (builtin i_CTRL-K, shadowed above) rehomed here -- É À Ç « » etc.
-vim.keymap.set('i', '<C-b>', '<C-k>')
+vim.keymap.set('i', '<M-k>', '<C-k>')
 
 --------------------------------- MOTIONS
 
