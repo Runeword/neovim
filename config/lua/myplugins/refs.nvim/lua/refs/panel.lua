@@ -24,9 +24,9 @@ local ns = vim.api.nvim_create_namespace('refs.panel')
 local pane = {}
 local pane_ns = vim.api.nvim_create_namespace('refs.pane')
 
--- The colours after/plugin/colors.lua sets for trouble's lists, this panel's too
-local WINHIGHLIGHT = 'Normal:TroubleNormal,NormalNC:TroubleNormalNC,EndOfBuffer:TroubleNormal,'
-  .. 'CursorLine:TroubleCursorLine'
+-- Plain text even in the background, and a cursor line of the panel's own (see
+-- after/plugin/colors.lua)
+local WINHIGHLIGHT = 'NormalNC:Normal,EndOfBuffer:Normal,CursorLine:RefsCursorLine'
 
 local function valid(win)
   return win ~= nil and vim.api.nvim_win_is_valid(win)
@@ -102,7 +102,7 @@ local function pane_show(item)
     vim.w[pane.win].refs = 'pane'
     local wo = vim.wo[pane.win]
     wo.number, wo.cursorline, wo.signcolumn, wo.foldcolumn, wo.wrap = true, true, 'no', '0', false
-    wo.winfixheight, wo.winhighlight = true, 'CursorLine:TroubleCursorLine'
+    wo.winfixheight, wo.winhighlight = true, 'CursorLine:RefsCursorLine'
   end
   if item == nil then
     return
@@ -426,6 +426,36 @@ function M.refresh()
     if key_of(buf, { now[1] - 1, now[2] }) == key then -- (still there)
       M.show(buf, pos, refs)
     end
+  end)
+end
+
+-- Show the references of the symbol under the cursor and move into the list, onto the
+-- reference under the cursor, once the servers have answered; with none, say so and
+-- stay (`gf`)
+function M.focus()
+  local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local pos = { cursor[1] - 1, cursor[2] }
+  local key = key_of(buf, pos)
+  answers.ask(buf, pos, 'refs', function(refs)
+    local here = vim.api.nvim_get_current_win() == win and vim.api.nvim_win_get_buf(win) == buf
+    local now = here and vim.api.nvim_win_get_cursor(win)
+    if refs == nil or not (now and key_of(buf, { now[1] - 1, now[2] }) == key) then
+      return -- (no answer, or you moved on meanwhile)
+    end
+    local found = 0
+    for _, r in ipairs(refs or {}) do
+      found = found + #r.result
+    end
+    if found == 0 then
+      return vim.notify('No references', vim.log.levels.WARN)
+    end
+    M.open()
+    if list.key ~= key then
+      M.show(buf, pos, refs)
+    end
+    follow(buf, pos)
+    vim.api.nvim_set_current_win(list.win)
   end)
 end
 
