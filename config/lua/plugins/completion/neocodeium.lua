@@ -13,6 +13,14 @@ return {
 
     vim.keymap.set('i', '<C-CR>', neocodeium.accept)
     vim.keymap.set('i', '<C-w>', neocodeium.accept_word)
-    vim.keymap.set('i', '<C-e>', neocodeium.accept_line)
+    -- Accept the suggestion's line, or with none showing go to end of line (readline <C-e>,
+    -- see mappings.lua): accept_line alone does nothing then.
+    vim.keymap.set('i', '<C-e>', function()
+      if neocodeium.visible() then
+        neocodeium.accept_line()
+      else
+        vim.api.nvim_feedkeys(vim.keycode('<End>'), 'in', false)
+      end
+    end)
   end,
 }
