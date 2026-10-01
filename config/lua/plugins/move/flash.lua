@@ -192,13 +192,5 @@ return {
       end,
       desc = 'Flash',
     },
-    {
-      '<C-f>',
-      mode = { 'i' },
-      function()
-        require('flash').jump({ actions = actions })
-      end,
-      desc = 'Flash',
-    },
   },
 }
