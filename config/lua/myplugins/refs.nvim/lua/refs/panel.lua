@@ -1,13 +1,14 @@
 local vim = vim
 
 -- The references panel: a list on the right of the references of the symbol under the
--- cursor, grouped by file (the current file first), each with lines of code around it
--- (see refs.code), and a preview pane under it. It follows the cursor: whenever it
--- rests in the code, the list shows the references of the symbol there, its own cursor
--- on the reference under the code's. In the code, the pane shows the definition of that
--- symbol when it's in another file, and stays blank when it's in this one (a jump away)
--- or there is none; while you browse the list, the reference under the list's cursor.
--- From the code, <Up>/<Down> take the cursor to the list's previous/next reference (M.go).
+-- cursor, grouped by file (the current file first), a line each (one for those sharing
+-- a line of code) with lines of code around it (see refs.code), and a preview pane under
+-- it. It follows the cursor: whenever it rests in the code, the list shows the
+-- references of the symbol there, its own cursor on the reference under the code's. In
+-- the code, the pane shows the definition of that symbol when it's in another file, and
+-- stays blank when it's in this one (a jump away) or there is none; while you browse
+-- the list, the reference under the list's cursor. From the code, <Up>/<Down> take the
+-- cursor to the list's previous/next reference (M.go).
 local answers = require('refs.answers')
 local code = require('refs.code')
 
@@ -47,7 +48,8 @@ local function key_of(buf, pos)
   return buf .. ':' .. vim.api.nvim_buf_get_changedtick(buf) .. ':' .. pos[1] .. ':' .. pos[2]
 end
 
--- The reference under the list's cursor, or the first of the file under a file header
+-- The item (see code.prepare) under the list's cursor, or the file's first under a file
+-- header
 local function selected()
   local row = list.rows[vim.api.nvim_win_get_cursor(list.win)[1]]
   return row and (row.item or row.file[1])
@@ -183,7 +185,8 @@ local function pane_show(item)
     return
   end
   local buf = pane_buffer(item)
-  local key = item.pos[1] .. ':' .. item.pos[2]
+  local refs = item.refs or { item } -- (an item of the list: the references on its line)
+  local key = item.pos[1] .. ':' .. item.pos[2] .. ':' .. #refs
   if vim.api.nvim_win_get_buf(pane.win) == buf and pane.key == key then
     return
   end
@@ -191,12 +194,14 @@ local function pane_show(item)
   local label = file_label(item.filename, vim.api.nvim_win_get_width(pane.win))
   pane_frame(winbar(label)) -- (before centering: the winbar takes a row)
   vim.api.nvim_buf_clear_namespace(buf, pane_ns, 0, -1)
-  vim.api.nvim_buf_set_extmark(buf, pane_ns, item.pos[1] - 1, item.pos[2], {
-    end_row = item.end_pos[1] - 1,
-    end_col = item.end_pos[2],
-    hl_group = 'RefsMatch',
-    strict = false,
-  })
+  for _, ref in ipairs(refs) do
+    vim.api.nvim_buf_set_extmark(buf, pane_ns, ref.pos[1] - 1, ref.pos[2], {
+      end_row = ref.end_pos[1] - 1,
+      end_col = ref.end_pos[2],
+      hl_group = 'RefsMatch',
+      strict = false,
+    })
+  end
   pcall(vim.api.nvim_win_set_cursor, pane.win, item.pos)
   vim.api.nvim_win_call(pane.win, function()
     vim.cmd('normal! zz')
@@ -254,10 +259,10 @@ local function context_line(line)
 end
 
 -- Draw `files` (see code.prepare), the code buffer's file first: a header per file,
--- then a line per reference, the reference itself marked (RefsMatch). The context lines
--- go under these as virtual lines (so the cursor steps from reference to reference over
--- them): the lines above a reference under the list line before it, those below it
--- under its own. Each gets the tree guide continued down, then blanks and its line
+-- then a line per item, a line of code with each reference on it marked (RefsMatch).
+-- The context lines go under these as virtual lines (so the cursor steps from item to
+-- item over them): the lines above an item under the list line before it, those below
+-- it under its own. Each gets the tree guide continued down, then blanks and its line
 -- number under the reference's icon and line number columns. The code is highlighted
 -- once in view (M.highlight).
 local function render(files, lnum_width, code_buf)
@@ -294,7 +299,7 @@ local function render(files, lnum_width, code_buf)
   end
   for _, f in ipairs(files) do
     local header = file_label(f.filename)
-    vim.list_extend(header, { { ' ' }, { (' %d '):format(#f), 'TabLineSel' } })
+    vim.list_extend(header, { { ' ' }, { (' %d '):format(#f.refs), 'TabLineSel' } })
     add(header, { file = f })
     for i, item in ipairs(f) do
       local more = i < #f -- (the tree's guide goes on down)
@@ -327,10 +332,12 @@ local function render(files, lnum_width, code_buf)
     for _, hl in ipairs(row.hls) do
       vim.api.nvim_buf_set_extmark(buf, ns, i - 1, hl[1], { end_col = hl[2], hl_group = hl[3] })
     end
-    if row.item then -- (its code ends the line; the mark goes over the code's highlighting)
-      local col, match = #lines[i] - #row.item.code, row.item.match
-      local opts = { end_col = col + match[2], hl_group = 'RefsMatch', priority = 4097 }
-      vim.api.nvim_buf_set_extmark(buf, ns, i - 1, col + match[1], opts)
+    if row.item then -- (its code ends the line; the marks go over the code's highlighting)
+      local col = #lines[i] - #row.item.code
+      for _, ref in ipairs(row.item.refs) do
+        local opts = { end_col = col + ref.match[2], hl_group = 'RefsMatch', priority = 4097 }
+        vim.api.nvim_buf_set_extmark(buf, ns, i - 1, col + ref.match[1], opts)
+      end
     end
     if row.lines then
       local opts = { virt_lines = vim.tbl_map(context_line, row.lines), virt_lines_overflow = 'scroll' }
@@ -393,28 +400,39 @@ function M.highlight(win, toprow)
   end
 end
 
--- Put the list's cursor on the reference at `pos` in `code_buf`, else on its file's
--- header (not while you browse the list)
+-- Which of the references of `item` (see code.prepare) is the one at `pos` (0-indexed
+-- row, byte col) in `buf`: its index in `item.refs`, if any
+local function ref_at(item, buf, pos)
+  if item.buf == buf and item.pos[1] == pos[1] + 1 then
+    for k, ref in ipairs(item.refs) do
+      if ref.pos[2] <= pos[2] and pos[2] <= ref.end_pos[2] then
+        return k
+      end
+    end
+  end
+end
+
+-- Put the list's cursor on the item holding the reference at `pos` in `code_buf`, else
+-- on its file's header (not while you browse the list)
 local function follow(code_buf, pos)
   if vim.api.nvim_get_current_win() == list.win then
     return
   end
   local header
   for i, row in ipairs(list.rows) do
-    local it = row.item
-    if it and it.buf == code_buf and it.pos[1] == pos[1] + 1 and it.pos[2] <= pos[2] and pos[2] <= it.end_pos[2] then
+    if row.item and ref_at(row.item, code_buf, pos) then
       return vim.api.nvim_win_set_cursor(list.win, { i, 0 })
-    elseif not it and row.file.buf == code_buf then
+    elseif not row.item and row.file.buf == code_buf then
       header = header or i
     end
   end
   vim.api.nvim_win_set_cursor(list.win, { header or 1, 0 })
 end
 
--- The locations in `refs` (see refs.answers) as items: { filename, buf, pos, end_pos },
--- positions as { row, col }, the row 1-based, the col a 0-indexed byte (servers count
--- characters, in their own encoding). A location past the end of its file (from a
--- server behind on edits) is left out.
+-- The locations in `refs` (see refs.answers) as code.prepare takes them: { filename,
+-- buf, pos, end_pos }, positions as { row, col }, the row 1-based, the col a 0-indexed
+-- byte (servers count characters, in their own encoding). A location past the end of
+-- its file (from a server behind on edits) is left out.
 local function refs_items(refs)
   local items, seen, lines = {}, {}, {}
   for _, r in ipairs(refs or {}) do
@@ -550,36 +568,54 @@ local function jump()
   end
 end
 
--- Move the list's cursor to the next (`dir` 1) or previous (-1) reference, [count] times
+-- The list line of the next item after line `row` (`dir` 1) or the previous (-1), if any
+local function item_row(row, dir)
+  repeat
+    row = row + dir
+  until not list.rows[row] or list.rows[row].item
+  return list.rows[row] and row
+end
+
+-- Move the list's cursor to the next (`dir` 1) or previous (-1) item, [count] times
 local function step(dir)
   local row = vim.api.nvim_win_get_cursor(list.win)[1]
   for _ = 1, vim.v.count1 do
-    local i = row + dir
-    while list.rows[i] and not list.rows[i].item do
-      i = i + dir
-    end
-    if not list.rows[i] then
-      break
-    end
-    row = i
+    row = item_row(row, dir) or row
   end
   vim.api.nvim_win_set_cursor(list.win, { row, 0 })
 end
 
 -- From a code window, take the cursor to the list's next (`dir` 1) or previous (-1)
--- reference, [count] times on, the list's cursor along (<Up>/<Down>). The list holds
--- still meanwhile, where following would reorder it to put the file landed in first.
--- False when the list isn't open here or this isn't a code window.
+-- reference, [count] times on, the list's cursor along (<Up>/<Down>): the references an
+-- item holds come in turn, so the list's cursor stays on it meanwhile. The list holds
+-- still, where following would reorder it to put the file landed in first. False when
+-- the list isn't open here or this isn't a code window.
 function M.go(dir)
   local win = vim.api.nvim_get_current_win()
   if not (M.is_open() and code_window(win)) then
     return false
   end
-  local row = vim.api.nvim_win_get_cursor(list.win)[1]
-  step(dir)
-  if vim.api.nvim_win_get_cursor(list.win)[1] ~= row then
-    open(selected(), win, true)
-    local cursor = vim.api.nvim_win_get_cursor(win)
+  local row, cursor = vim.api.nvim_win_get_cursor(list.win)[1], vim.api.nvim_win_get_cursor(win)
+  local item = list.rows[row] and list.rows[row].item
+  -- (from the reference under the cursor, when the list's item holds it)
+  local k = item and ref_at(item, vim.api.nvim_win_get_buf(win), { cursor[1] - 1, cursor[2] })
+  local ref
+  for _ = 1, vim.v.count1 do
+    if not (k and item.refs[k + dir]) then -- (on to the next item)
+      local i = item_row(row, dir)
+      if not i then
+        break
+      end
+      row, item = i, list.rows[i].item
+      k = dir > 0 and 0 or #item.refs + 1
+    end
+    k = k + dir
+    ref = item.refs[k]
+  end
+  if ref then
+    vim.api.nvim_win_set_cursor(list.win, { row, 0 })
+    open(ref, win, true)
+    cursor = vim.api.nvim_win_get_cursor(win)
     list.key = key_of(vim.api.nvim_win_get_buf(win), { cursor[1] - 1, cursor[2] })
     M.definition()
   end
@@ -616,7 +652,7 @@ function M.open()
   end, 'Open the reference and close the panel')
   map('q', M.close, 'Close the panel')
   map('<esc>', M.close, 'Close the panel')
-  -- One reference at a time (j/k would otherwise do this config's 4-line jump)
+  -- One item at a time (j/k would otherwise do this config's 4-line jump)
   for _, lhs in ipairs({ 'j', '<down>' }) do
     map(lhs, function()
       step(1)
