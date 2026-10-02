@@ -53,11 +53,54 @@ local function selected()
   return row and (row.item or row.file[1])
 end
 
+-- The file's icon and its highlight group: mini.icons', else nvim-web-devicons'
+local function file_icon(filename)
+  local name = vim.fn.fnamemodify(filename, ':t')
+  local ok, icon, hl = pcall(function()
+    return require('mini.icons').get('file', name)
+  end)
+  if not (ok and icon) then
+    ok, icon, hl = pcall(function()
+      return require('nvim-web-devicons').get_icon(name, vim.fn.fnamemodify(name, ':e'), { default = true })
+    end)
+  end
+  if ok then
+    return icon, hl
+  end
+end
+
+-- The file as the list's headers and the pane's winbar name it, as { text, hl }
+-- segments: its icon, then its path. Given a `width` to fit in, the path loses leading
+-- directories as needed (a winbar would cut it anywhere, marking the cut with a '<').
+local function file_label(filename, width)
+  local icon, icon_hl = file_icon(filename)
+  local label = { { ' ' } }
+  if icon then
+    label[#label + 1] = { icon .. ' ', icon_hl }
+  end
+  label[#label + 1] = { ' ' }
+  local path = vim.fn.fnamemodify(filename, ':p:~:.')
+  if width then
+    local room = width
+    for _, s in ipairs(label) do
+      room = room - vim.fn.strdisplaywidth(s[1])
+    end
+    while vim.fn.strdisplaywidth(path) > room and path:find('/') do
+      path = path:gsub('^[^/]*/', '')
+    end
+    while vim.fn.strdisplaywidth(path) > room and path ~= '' do -- (the name alone is too long)
+      path = vim.fn.strcharpart(path, 1)
+    end
+  end
+  label[#label + 1] = { path, 'Directory' }
+  return label
+end
+
 -------------------- Pane
 
 -- The pane shows a scratch copy of the file, not its buffer, so the pane's highlight
--- and cursor never reach a code window showing that buffer; a winbar labels it with
--- the file and line it comes from.
+-- and cursor never reach a code window showing that buffer; a winbar names the file it
+-- comes from, as the list's headers do.
 
 local function scratch_buf()
   local buf = vim.api.nvim_create_buf(false, true)
@@ -94,6 +137,16 @@ local function pane_buffer(item)
   return buf
 end
 
+-- { text, hl } segments as a winbar
+local function winbar(segments)
+  local parts = {}
+  for _, s in ipairs(segments) do
+    local text = s[1]:gsub('%%', '%%%%')
+    parts[#parts + 1] = s[2] and ('%#' .. s[2] .. '#' .. text .. '%*') or text
+  end
+  return table.concat(parts)
+end
+
 -- What the pane shows around the code: the winbar `label`, line numbers and the cursor
 -- line. None of it while blank (`label` nil): the empty buffer would show its one line.
 local function pane_frame(label)
@@ -115,7 +168,8 @@ local function pane_show(item)
     vim.w[pane.win].refs = 'pane'
     local wo = vim.wo[pane.win]
     wo.signcolumn, wo.foldcolumn, wo.wrap = 'no', '0', false
-    wo.winfixheight, wo.winhighlight = true, 'CursorLine:RefsCursorLine'
+    -- (the winbar on the plain background, as the list's file headers)
+    wo.winfixheight, wo.winhighlight = true, 'CursorLine:RefsCursorLine,WinBar:Normal,WinBarNC:Normal'
     pane_frame(nil)
   end
   if item == nil then
@@ -134,8 +188,8 @@ local function pane_show(item)
     return
   end
   pane_set_buf(buf)
-  local path = vim.fn.fnamemodify(item.filename, ':~:.'):gsub('%%', '%%%%')
-  pane_frame(' ' .. path .. ':' .. item.pos[1]) -- (before centering: the winbar takes a row)
+  local label = file_label(item.filename, vim.api.nvim_win_get_width(pane.win))
+  pane_frame(winbar(label)) -- (before centering: the winbar takes a row)
   vim.api.nvim_buf_clear_namespace(buf, pane_ns, 0, -1)
   vim.api.nvim_buf_set_extmark(buf, pane_ns, item.pos[1] - 1, item.pos[2], {
     end_row = item.end_pos[1] - 1,
@@ -192,22 +246,6 @@ end
 
 -------------------- List
 
--- The file's icon and its highlight group: mini.icons', else nvim-web-devicons'
-local function file_icon(filename)
-  local name = vim.fn.fnamemodify(filename, ':t')
-  local ok, icon, hl = pcall(function()
-    return require('mini.icons').get('file', name)
-  end)
-  if not (ok and icon) then
-    ok, icon, hl = pcall(function()
-      return require('nvim-web-devicons').get_icon(name, vim.fn.fnamemodify(name, ':e'), { default = true })
-    end)
-  end
-  if ok then
-    return icon, hl
-  end
-end
-
 -- A context line as virtual line chunks: its prefix, then its code (a gap between
 -- blocks has no row: the guide alone)
 local function context_line(line)
@@ -216,11 +254,12 @@ local function context_line(line)
 end
 
 -- Draw `files` (see code.prepare), the code buffer's file first: a header per file,
--- then a line per reference, the reference itself marked (RefsMatch). The context lines go under these as virtual lines (so the
--- cursor steps from reference to reference over them): the lines above a reference
--- under the list line before it, those below it under its own. Each gets the tree
--- guide continued down, then blanks and its line number under the reference's icon
--- and line number columns. The code is highlighted once in view (M.highlight).
+-- then a line per reference, the reference itself marked (RefsMatch). The context lines
+-- go under these as virtual lines (so the cursor steps from reference to reference over
+-- them): the lines above a reference under the list line before it, those below it
+-- under its own. Each gets the tree guide continued down, then blanks and its line
+-- number under the reference's icon and line number columns. The code is highlighted
+-- once in view (M.highlight).
 local function render(files, lnum_width, code_buf)
   table.sort(files, function(a, b)
     if (a.buf == code_buf) ~= (b.buf == code_buf) then
@@ -254,17 +293,8 @@ local function render(files, lnum_width, code_buf)
     row.lines[#row.lines + 1] = { prefix = prefix, block = block, row = r }
   end
   for _, f in ipairs(files) do
-    local icon, icon_hl = file_icon(f.filename)
-    local header = { { ' ' } }
-    if icon then
-      header[#header + 1] = { icon .. ' ', icon_hl }
-    end
-    vim.list_extend(header, {
-      { ' ' },
-      { vim.fn.fnamemodify(f.filename, ':p:~:.'), 'Directory' },
-      { ' ' },
-      { (' %d '):format(#f), 'TabLineSel' },
-    })
+    local header = file_label(f.filename)
+    vim.list_extend(header, { { ' ' }, { (' %d '):format(#f), 'TabLineSel' } })
     add(header, { file = f })
     for i, item in ipairs(f) do
       local more = i < #f -- (the tree's guide goes on down)
