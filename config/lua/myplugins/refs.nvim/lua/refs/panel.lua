@@ -4,11 +4,12 @@ local vim = vim
 -- cursor, grouped by file (the current file first), a line each (one for those sharing
 -- a line of code) with lines of code around it (see refs.code), and a preview pane under
 -- it. It follows the cursor: whenever it rests in the code, the list shows the
--- references of the symbol there, its own cursor on the reference under the code's. In
--- the code, the pane shows the definition of that symbol when it's in another file, and
--- stays blank when it's in this one (a jump away) or there is none; while you browse
--- the list, the reference under the list's cursor. From the code, <Up>/<Down> take the
--- cursor to the list's previous/next reference (M.go).
+-- references of the symbol there, its own cursor on the reference under the code's,
+-- which it marks as the current one (RefsCurrent). In the code, the pane shows the
+-- definition of that symbol when it's in another file, and stays blank when it's in
+-- this one (a jump away) or there is none; while you browse the list, the reference
+-- under the list's cursor. From the code, <Up>/<Down> take the cursor to the list's
+-- previous/next reference (M.go).
 local answers = require('refs.answers')
 local code = require('refs.code')
 
@@ -21,6 +22,7 @@ local WIDTH = 0.4 -- of the editor's columns
 -- last entered, where references open)
 local list = { rows = {} }
 local ns = vim.api.nvim_create_namespace('refs.panel')
+local current_ns = vim.api.nvim_create_namespace('refs.current') -- (see mark_current)
 
 -- The pane: win, buf, and what it shows: file, tick (of the file's buffer), key
 local pane = {}
@@ -331,6 +333,7 @@ local function render(files, lnum_width, code_buf)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, current_ns, 0, -1)
   for i, row in ipairs(rows) do
     for _, hl in ipairs(row.hls) do
       vim.api.nvim_buf_set_extmark(buf, ns, i - 1, hl[1], { end_col = hl[2], hl_group = hl[3] })
@@ -415,20 +418,37 @@ local function ref_at(item, buf, pos)
   end
 end
 
--- Put the list's cursor on the item holding the reference at `pos` in `code_buf`, else
--- on its file's header (not while you browse the list)
+-- Mark reference `k` of the item on list line `row` as the current one, the one under
+-- the code's cursor, over its RefsMatch (RefsCurrent); without a `row`, none
+local function mark_current(row, k)
+  vim.api.nvim_buf_clear_namespace(list.buf, current_ns, 0, -1)
+  local item = row and list.rows[row].item
+  if item then
+    local text = vim.api.nvim_buf_get_lines(list.buf, row - 1, row, false)[1] or ''
+    local col, match = #text - #item.code, item.refs[k].match -- (its code ends the line, see render)
+    local opts = { end_col = col + match[2], hl_group = 'RefsCurrent', priority = 4098 }
+    vim.api.nvim_buf_set_extmark(list.buf, current_ns, row - 1, col + match[1], opts)
+  end
+end
+
+-- Put the list's cursor on the item holding the reference at `pos` in `code_buf`, and
+-- mark that reference as the current one; else on its file's header (not while you
+-- browse the list)
 local function follow(code_buf, pos)
   if vim.api.nvim_get_current_win() == list.win then
     return
   end
   local header
   for i, row in ipairs(list.rows) do
-    if row.item and ref_at(row.item, code_buf, pos) then
+    local k = row.item and ref_at(row.item, code_buf, pos)
+    if k then
+      mark_current(i, k)
       return vim.api.nvim_win_set_cursor(list.win, { i, 0 })
     elseif not row.item and row.file.buf == code_buf then
       header = header or i
     end
   end
+  mark_current()
   vim.api.nvim_win_set_cursor(list.win, { header or 1, 0 })
 end
 
@@ -617,6 +637,7 @@ function M.go(dir)
   end
   if ref then
     vim.api.nvim_win_set_cursor(list.win, { row, 0 })
+    mark_current(row, k)
     open(ref, win, true)
     cursor = vim.api.nvim_win_get_cursor(win)
     list.key = key_of(vim.api.nvim_win_get_buf(win), { cursor[1] - 1, cursor[2] })
