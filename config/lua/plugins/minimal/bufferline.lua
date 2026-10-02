@@ -11,7 +11,6 @@ return {
       group = 'bufferline',
       pattern = '*',
       callback = function()
-        vim.api.nvim_set_hl(0, 'BufferLineFill', { bg = 'none' })
         vim.api.nvim_set_hl(0, 'BufferLineBackground', { fg = '#7a7c9e' })
         vim.api.nvim_set_hl(0, 'BufferLineBufferSelected', { fg = 'white', bg = 'none' })
         vim.api.nvim_set_hl(0, 'BufferLineNumbers', { fg = '#7a7c9e', bg = 'none', italic = false })
@@ -72,6 +71,16 @@ return {
     end)
 
     require('bufferline').setup({
+      -- No backgrounds: bufferline shades its own from nightfly's Normal (icons, the close-button cell, buffers
+      -- visible in other windows, the fill). The icon groups are generated per filetype from these tables, out of
+      -- reach of the overrides in init, and a bg-only override there is empty, so bufferline replaces it.
+      highlights = function(defaults)
+        local hls = {}
+        for name in pairs(defaults.highlights) do
+          hls[name] = { bg = 'NONE' }
+        end
+        return hls
+      end,
       options = {
         numbers = function(opts)
           return string.format('%s', opts.id)
