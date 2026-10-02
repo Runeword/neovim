@@ -16,6 +16,12 @@ function M.lines(filename, buf)
   return ok and lines or {}
 end
 
+-- Where byte `col` of `line`, a line of block `b` (see M.prepare), falls in the code the
+-- list shows for it: dedented with the block, tabs expanded
+local function shown_col(b, line, col)
+  return #(line:sub(b.dedent + 1, col):gsub('\t', b.tab))
+end
+
 -- Prepare `items`, references ({ filename, buf, pos, end_pos }, positions as { row,
 -- col }: the row 1-based, the col a 0-indexed byte), for the list, grouped by file.
 --
@@ -24,8 +30,9 @@ end
 -- source line and derive it ourselves. The `ref_kind` stashed on each item marks the
 -- calls in the list.
 --
--- Each item also gets the code the list shows for it: its line (`code`) and the
--- REF_CONTEXT lines around it (`above`, `below`: row ranges). References close by share
+-- Each item also gets the code the list shows for it: its line (`code`, the reference
+-- at bytes `match` of it, the end excluded) and the REF_CONTEXT lines around it
+-- (`above`, `below`: row ranges). References close by share
 -- a `block` of consecutive lines, so no line shows twice, dedented as a whole so the
 -- indentation inside it stays true; `gap` marks a block that follows another in the
 -- same file. Returns the files ({ filename, buf, its items in order }) and the widest
@@ -97,6 +104,8 @@ function M.prepare(items)
       local b = item.block
       local text = b.lines[item.pos[1] - b.first + 1] or ''
       item.code = (text:sub(b.dedent + 1):gsub('\t', b.tab))
+      local to = item.end_pos[1] == item.pos[1] and shown_col(b, text, item.end_pos[2]) or #item.code
+      item.match = { shown_col(b, text, item.pos[2]), to }
       local line = b.lines[item.end_pos[1] - b.first + 1] or ''
       -- `end_pos[2]` is a 0-indexed byte column, so sub(col + 1) starts at the
       -- first character past the symbol.
