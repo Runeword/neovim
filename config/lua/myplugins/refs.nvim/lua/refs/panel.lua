@@ -94,6 +94,13 @@ local function pane_buffer(item)
   return buf
 end
 
+-- What the pane shows around the code: the winbar `label`, line numbers and the cursor
+-- line. None of it while blank (`label` nil): the empty buffer would show its one line.
+local function pane_frame(label)
+  local wo = vim.wo[pane.win]
+  wo.winbar, wo.number, wo.cursorline = label or '', label ~= nil, label ~= nil
+end
+
 -- Point the pane at `item`, opening it under the list first (blank). `false` blanks it,
 -- nil keeps what it shows.
 local function pane_show(item)
@@ -107,15 +114,16 @@ local function pane_show(item)
     pane.key = 'blank'
     vim.w[pane.win].refs = 'pane'
     local wo = vim.wo[pane.win]
-    wo.number, wo.cursorline, wo.signcolumn, wo.foldcolumn, wo.wrap = true, true, 'no', '0', false
+    wo.signcolumn, wo.foldcolumn, wo.wrap = 'no', '0', false
     wo.winfixheight, wo.winhighlight = true, 'CursorLine:RefsCursorLine'
+    pane_frame(nil)
   end
   if item == nil then
     return
   elseif item == false then
     if pane.key ~= 'blank' then
       pane_set_buf(scratch_buf())
-      vim.wo[pane.win].winbar = ''
+      pane_frame(nil)
       pane.key = 'blank'
     end
     return
@@ -126,6 +134,8 @@ local function pane_show(item)
     return
   end
   pane_set_buf(buf)
+  local path = vim.fn.fnamemodify(item.filename, ':~:.'):gsub('%%', '%%%%')
+  pane_frame(' ' .. path .. ':' .. item.pos[1]) -- (before centering: the winbar takes a row)
   vim.api.nvim_buf_clear_namespace(buf, pane_ns, 0, -1)
   vim.api.nvim_buf_set_extmark(buf, pane_ns, item.pos[1] - 1, item.pos[2], {
     end_row = item.end_pos[1] - 1,
@@ -137,8 +147,6 @@ local function pane_show(item)
   vim.api.nvim_win_call(pane.win, function()
     vim.cmd('normal! zz')
   end)
-  local path = vim.fn.fnamemodify(item.filename, ':~:.'):gsub('%%', '%%%%')
-  vim.wo[pane.win].winbar = ' ' .. path .. ':' .. item.pos[1]
   pane.key = key
 end
 
