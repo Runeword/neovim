@@ -252,7 +252,7 @@ end
 -------------------- List
 
 -- A context line as virtual line chunks: its prefix, then its code (a gap between
--- blocks has no row: the guide alone)
+-- blocks has no row: the guide and '...' alone)
 local function context_line(line)
   local chunks = vim.list_slice(line.prefix)
   return line.row and vim.list_extend(chunks, code.chunks(line.block, line.row)) or chunks
@@ -287,11 +287,14 @@ local function render(files, lnum_width, code_buf)
     lines[#lines + 1] = table.concat(text)
     rows[#lines] = row
   end
-  -- A context line under the last list line: `guide`, then row `r` of `block` (none: a gap)
+  -- A context line under the last list line: `guide`, then row `r` of `block`; with no
+  -- row, a gap (lines left out), marked '...' ending under the line numbers
   local function context(guide, block, r)
     local prefix = { { ' ' }, { guide, 'LineNr' } }
     if r then
       prefix[3] = { ('  %' .. lnum_width .. 'd '):format(r), 'NonText' }
+    else
+      prefix[3] = { ('%' .. (lnum_width + 2) .. 's'):format('...'), 'NonText' }
     end
     local row = rows[#lines]
     row.lines = row.lines or {}
