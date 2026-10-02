@@ -30,6 +30,9 @@ return {
         -- end, { buffer = bufnr, })
 
         vim.keymap.set('n', '<Down>', function()
+          if require('refs').go(1) then
+            return -- (the refs panel is open: its next reference instead)
+          end
           if not require('aerial').is_open() then
             require('aerial').toggle({ focus = false })
           end
@@ -37,6 +40,9 @@ return {
         end, { buffer = bufnr })
 
         vim.keymap.set('n', '<Up>', function()
+          if require('refs').go(-1) then
+            return -- (the refs panel is open: its previous reference instead)
+          end
           if not require('aerial').is_open() then
             require('aerial').toggle({ focus = false })
           end
