@@ -1,7 +1,8 @@
 local vim = vim
 
 -- References: <Left>/<Right> hop between the symbols that have references (refs.hop),
--- and a panel listing the references of the symbol under the cursor (refs.panel).
+-- and a panel listing the references of the symbol under the cursor (refs.panel), which
+-- <Up>/<Down> go through while it's open.
 local answers = require('refs.answers')
 local hop = require('refs.hop')
 local panel = require('refs.panel')
@@ -10,10 +11,14 @@ local M = {}
 
 M.toggle = panel.toggle -- the panel
 M.focus = panel.focus -- the panel, moving into it
+M.go = panel.go -- to the panel's next (dir 1) or previous (-1) reference; false if it's closed
 M.hop = hop.hop -- dir: 1 next, -1 previous
 
 function M.setup()
   local group = vim.api.nvim_create_augroup('refs', { clear = true })
+
+  -- The reference itself, in the list and the pane (after/plugin/colors.lua can set it)
+  vim.api.nvim_set_hl(0, 'RefsMatch', { default = true, link = 'LspReferenceText' })
 
   vim.api.nvim_create_autocmd('BufWritePost', { group = group, callback = answers.forget })
 
