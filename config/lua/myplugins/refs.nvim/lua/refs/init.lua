@@ -19,6 +19,8 @@ function M.setup()
 
   -- The reference itself, in the list and the pane (after/plugin/colors.lua can set it)
   vim.api.nvim_set_hl(0, 'RefsMatch', { default = true, link = 'LspReferenceText' })
+  -- Over it in the list, the one under the cursor, as a search's current match
+  vim.api.nvim_set_hl(0, 'RefsCurrent', { default = true, link = 'CurSearch' })
 
   vim.api.nvim_create_autocmd('BufWritePost', { group = group, callback = answers.forget })
 
