@@ -1,7 +1,7 @@
 local vim = vim
 
--- The code the references panel shows for each reference: its line, with REF_CONTEXT
--- lines around it, highlighted as in its file.
+-- The code the references panel shows for each line holding references: that line,
+-- with REF_CONTEXT lines around it, highlighted as in its file.
 local M = {}
 
 local REF_CONTEXT = 1 -- lines of code shown above and below each reference
@@ -22,31 +22,54 @@ local function shown_col(b, line, col)
   return #(line:sub(b.dedent + 1, col):gsub('\t', b.tab))
 end
 
--- Prepare `items`, references ({ filename, buf, pos, end_pos }, positions as { row,
--- col }: the row 1-based, the col a 0-indexed byte), for the list, grouped by file.
+-- Whether reference `ref`, on a line of block `b` (see M.prepare), is a call: the symbol
+-- is immediately followed by `(`. Servers answer bare locations with no such tag, so we
+-- read the source line and derive it ourselves.
+local function is_call(b, ref)
+  local line = b.lines[ref.end_pos[1] - b.first + 1] or ''
+  -- `end_pos[2]` is a 0-indexed byte column, so sub(col + 1) starts at the
+  -- first character past the symbol.
+  local after = line:sub(ref.end_pos[2] + 1)
+  -- A definition's name (`function foo(`, `def foo(`, …) is also followed by
+  -- `(` — don't count it as a call. Anchored at the start of the line so a
+  -- genuine call such as `function_tbl.foo(` is not mistaken for a def.
+  -- (C-family definitions have no keyword and will still read as calls.)
+  local before = line:sub(1, ref.pos[2])
+  local is_def = before:match('^%s*function%s')
+    or before:match('^%s*local%s+function%s')
+    or before:match('^%s*async%s+function%s')
+    or before:match('^%s*def%s')
+    or before:match('^%s*async%s+def%s')
+    or before:match('^%s*func%s')
+    or before:match('^%s*fn%s')
+  return after:match('^%s*%(') ~= nil and not is_def
+end
+
+-- Prepare `refs`, references ({ filename, buf, pos, end_pos }, positions as { row,
+-- col }: the row 1-based, the col a 0-indexed byte), for the list: grouped by file, an
+-- item ({ filename, buf, pos, refs }) per line of code holding some, the references on
+-- it in its `refs`, left to right, `pos` the first's.
 --
--- Classify each as either a `Call` (the symbol is immediately followed by `(`) or a
--- plain `Reference`: servers answer bare locations with no such tag, so we read the
--- source line and derive it ourselves. The `ref_kind` stashed on each item marks the
--- calls in the list.
+-- Each item gets a `ref_kind`, `Call` when one of its references is a call (see
+-- is_call), else `Reference`: it marks the calls in the list.
 --
--- Each item also gets the code the list shows for it: its line (`code`, the reference
--- at bytes `match` of it, the end excluded) and the REF_CONTEXT lines around it
--- (`above`, `below`: row ranges). References close by share
+-- Each item also gets the code the list shows for it: its line (`code`, each of its
+-- references at bytes `match` of it, the end excluded) and the REF_CONTEXT lines around
+-- it (`above`, `below`: row ranges). Items close by share
 -- a `block` of consecutive lines, so no line shows twice, dedented as a whole so the
 -- indentation inside it stays true; `gap` marks a block that follows another in the
--- same file. Returns the files ({ filename, buf, its items in order }) and the widest
--- line number shown, to right-align the numbers.
-function M.prepare(items)
+-- same file. Returns the files ({ filename, buf, refs, its items in order }) and the
+-- widest line number shown, to right-align the numbers.
+function M.prepare(refs)
   local files, by_name, lnum_width = {}, {}, 1
-  for _, item in ipairs(items) do
-    local f = by_name[item.filename]
+  for _, ref in ipairs(refs) do
+    local f = by_name[ref.filename]
     if not f then
-      f = { filename = item.filename, buf = item.buf }
-      by_name[item.filename] = f
+      f = { filename = ref.filename, buf = ref.buf, refs = {} }
+      by_name[ref.filename] = f
       files[#files + 1] = f
     end
-    f[#f + 1] = item
+    f.refs[#f.refs + 1] = ref
   end
 
   for _, f in ipairs(files) do
@@ -66,9 +89,18 @@ function M.prepare(items)
       file.buf, file.tick = f.buf, vim.api.nvim_buf_get_changedtick(f.buf)
     end
 
-    table.sort(f, function(a, b)
+    table.sort(f.refs, function(a, b)
       return a.pos[1] < b.pos[1] or (a.pos[1] == b.pos[1] and a.pos[2] < b.pos[2])
     end)
+    for _, ref in ipairs(f.refs) do
+      local item = f[#f]
+      if item and item.pos[1] == ref.pos[1] then
+        item.refs[#item.refs + 1] = ref
+      else
+        f[#f + 1] = { filename = ref.filename, buf = ref.buf, pos = ref.pos, refs = { ref } }
+      end
+    end
+
     local blocks, block, shown = {}, nil, 0 -- shown: the last line shown so far
     for i, item in ipairs(f) do
       local row = item.pos[1]
@@ -104,26 +136,14 @@ function M.prepare(items)
       local b = item.block
       local text = b.lines[item.pos[1] - b.first + 1] or ''
       item.code = (text:sub(b.dedent + 1):gsub('\t', b.tab))
-      local to = item.end_pos[1] == item.pos[1] and shown_col(b, text, item.end_pos[2]) or #item.code
-      item.match = { shown_col(b, text, item.pos[2]), to }
-      local line = b.lines[item.end_pos[1] - b.first + 1] or ''
-      -- `end_pos[2]` is a 0-indexed byte column, so sub(col + 1) starts at the
-      -- first character past the symbol.
-      local after = line:sub(item.end_pos[2] + 1)
-      local is_call = after:match('^%s*%(') ~= nil
-      -- A definition's name (`function foo(`, `def foo(`, …) is also followed by
-      -- `(` — don't count it as a call. Anchored at the start of the line so a
-      -- genuine call such as `function_tbl.foo(` is not mistaken for a def.
-      -- (C-family definitions have no keyword and will still read as calls.)
-      local before = line:sub(1, item.pos[2])
-      local is_def = before:match('^%s*function%s')
-        or before:match('^%s*local%s+function%s')
-        or before:match('^%s*async%s+function%s')
-        or before:match('^%s*def%s')
-        or before:match('^%s*async%s+def%s')
-        or before:match('^%s*func%s')
-        or before:match('^%s*fn%s')
-      item.ref_kind = (is_call and not is_def) and 'Call' or 'Reference'
+      item.ref_kind = 'Reference'
+      for _, ref in ipairs(item.refs) do
+        local to = ref.end_pos[1] == ref.pos[1] and shown_col(b, text, ref.end_pos[2]) or #item.code
+        ref.match = { shown_col(b, text, ref.pos[2]), to }
+        if is_call(b, ref) then
+          item.ref_kind = 'Call'
+        end
+      end
     end
   end
   return files, lnum_width
