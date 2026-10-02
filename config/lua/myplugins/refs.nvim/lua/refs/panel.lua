@@ -454,6 +454,7 @@ function M.show(code_buf, pos, refs)
   vim.api.nvim_win_call(list.win, function()
     vim.fn.winrestview(view)
   end)
+  vim.wo[list.win].cursorline = #list.rows > 0 -- (an empty list still has a line to highlight)
   follow(code_buf, pos)
   M.sync()
 end
@@ -632,7 +633,7 @@ function M.open()
   vim.w[list.win].refs = 'list'
   local wo = vim.wo[list.win]
   wo.number, wo.relativenumber, wo.signcolumn, wo.foldcolumn, wo.statuscolumn = false, false, 'no', '0', ''
-  wo.cursorline, wo.wrap, wo.list, wo.spell, wo.winfixwidth = true, false, false, false, true
+  wo.cursorline, wo.wrap, wo.list, wo.spell, wo.winfixwidth = false, false, false, false, true -- (see M.show)
   wo.winbar, wo.fillchars, wo.winhighlight = '', 'eob: ', WINHIGHLIGHT
   M.sync() -- (opens the pane)
   if vim.bo.buftype == '' then
