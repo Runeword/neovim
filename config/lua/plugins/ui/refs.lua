@@ -27,6 +27,25 @@ return {
       end,
       desc = 'Next symbol with references',
     },
+    -- (in the buffers aerial attaches to, its own <Up>/<Down> ask refs first too)
+    {
+      '<Up>',
+      function()
+        if not require('refs').go(-1) then
+          vim.cmd('normal! ' .. vim.v.count1 .. 'k') -- no panel: a plain arrow
+        end
+      end,
+      desc = 'Previous reference in the refs panel',
+    },
+    {
+      '<Down>',
+      function()
+        if not require('refs').go(1) then
+          vim.cmd('normal! ' .. vim.v.count1 .. 'j') -- no panel: a plain arrow
+        end
+      end,
+      desc = 'Next reference in the refs panel',
+    },
   },
 
   config = function()
