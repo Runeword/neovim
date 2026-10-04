@@ -100,8 +100,9 @@ end
 local HOP_AHEAD = 4 -- landings known ahead of each one (half that each way on CursorHold)
 
 -- Ask ahead about the next `count` landings from `pos` (the definitions too, for the
--- pane), so the next presses land, and the pane updates, at once. Candidates known not
--- to be landings are passed over; only those not known yet are asked about.
+-- pane and the list's marks), so the next presses land, and the panel updates, at once.
+-- Candidates known not to be landings are passed over; only those not known yet are
+-- asked about.
 local function prefetch(buf, parser, pos, dir, count)
   local scan = { buf = buf, dir = dir, parser = parser, at = pos, row = pos[1], queue = {}, i = 0 }
   while count > 0 do
@@ -116,7 +117,7 @@ local function prefetch(buf, parser, pos, dir, count)
       if not known then
         answers.ask(buf, p, 'refs', function(refs)
           if answers.lands(refs) then
-            answers.ask(buf, p, 'def', function() end)
+            answers.ask(buf, p, 'defs', function() end)
           end
         end)
       end
