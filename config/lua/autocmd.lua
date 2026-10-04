@@ -70,7 +70,11 @@ vim.api.nvim_create_autocmd({ 'BufWinLeave' }, {
     if vim.bo[args.buf].buftype ~= '' then
       return
     end
-    vim.cmd('mkview')
+    -- (in the window it leaves: the current one can be another, as when :only closes it
+    -- from a window without a file, where mkview fails with E32)
+    vim.api.nvim_buf_call(args.buf, function()
+      vim.cmd('mkview')
+    end)
   end,
   desc = 'Save cursor position and folds when leaving a buffer',
 })
