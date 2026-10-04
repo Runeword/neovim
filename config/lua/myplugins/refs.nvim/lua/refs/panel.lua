@@ -3,13 +3,15 @@ local vim = vim
 -- The references panel: a list on the right of the references of the symbol under the
 -- cursor, grouped by file (the current file first), a line each (one for those sharing
 -- a line of code) with lines of code around it (see refs.code), and a preview pane under
--- it. It follows the cursor: whenever it rests in the code, the list shows the
--- references of the symbol there, its own cursor on the reference under the code's,
--- which it marks as the current one (RefsCurrent). In the code, the pane shows the
--- definition of that symbol when it's in another file, and stays blank when it's in
--- this one (a jump away) or there is none; while you browse the list, the reference
--- under the list's cursor. From the code, <Up>/<Down> take the cursor to the list's
--- previous/next reference (M.go).
+-- it. A line holding a definition of the symbol is marked 󰓾, else one holding a call 󰊕.
+-- It follows the cursor: whenever it rests in the code, the list shows the references
+-- of the symbol there, its own cursor on the reference under the code's, which it marks
+-- as the current one (RefsCurrent). In the code, the pane shows the definition of that
+-- symbol (the first, if several), in this file or another, and stays blank when there
+-- is none; while you browse the list, the reference under the list's cursor. From the
+-- code, <Up>/<Down> take the cursor to the list's previous/next reference (M.go). The
+-- code shows the references the list shows marked RefsMatch, as the list does, without
+-- the list's RefsCurrent on the current one: the cursor on it is mark enough.
 local answers = require('refs.answers')
 local code = require('refs.code')
 
@@ -17,12 +19,25 @@ local M = {}
 
 local WIDTH = 0.4 -- of the editor's columns
 
+-- The icon (and its highlight group) marking an item of the list by its `ref_kind` (see
+-- code.prepare)
+local KIND_ICONS = { Definition = { '󰓾 ', 'Constant' }, Call = { '󰊕 ', 'Function' } }
+
 -- The list: win, buf, rows (per line: { file, item, hls, lines, id, done }), key (what it
--- shows: the code buffer, its changedtick and the position), main (the code window
--- last entered, where references open)
-local list = { rows = {} }
+-- shows: the code buffer, its changedtick, servers attached and the position), main (the
+-- code window last entered, where references open), code (its references by buffer, see
+-- mark_code)
+local list = { rows = {}, code = {} }
+local attached = {} -- [buf] = how many servers attached to it so far (see M.attached)
 local ns = vim.api.nvim_create_namespace('refs.panel')
 local current_ns = vim.api.nvim_create_namespace('refs.current') -- (see mark_current)
+local code_ns = vim.api.nvim_create_namespace('refs.code') -- (see mark_code)
+
+-- The references' marks in the code go over its syntax, semantic tokens and diagnostics,
+-- and over the marks at the default priority (4096), as the list's go over its code's:
+-- grasp.nvim's on the node under the cursor would hide the reference there. (Under
+-- flash's labels, at 5000.)
+local CODE_PRIORITY = 4097
 
 -- The pane: win, buf, and what it shows: file, tick (of the file's buffer), key
 local pane = {}
@@ -47,7 +62,14 @@ function M.is_open()
 end
 
 local function key_of(buf, pos)
-  return buf .. ':' .. vim.api.nvim_buf_get_changedtick(buf) .. ':' .. pos[1] .. ':' .. pos[2]
+  local version = vim.api.nvim_buf_get_changedtick(buf) .. '.' .. (attached[buf] or 0)
+  return buf .. ':' .. version .. ':' .. pos[1] .. ':' .. pos[2]
+end
+
+-- A server attached to `buf`: what the list shows of it is to be asked again, and an
+-- answer to a question asked before is outdated (it lacks this server's part)
+function M.attached(buf)
+  attached[buf] = (attached[buf] or 0) + 1
 end
 
 -- The item (see code.prepare) under the list's cursor, or the file's first under a file
@@ -98,6 +120,113 @@ local function file_label(filename, width)
   end
   label[#label + 1] = { path, 'Directory' }
   return label
+end
+
+-- The locations in `answer`, the references or the definitions (see refs.answers), as
+-- code.prepare takes them: { filename, buf, pos, end_pos }, positions as { row, col },
+-- the row 1-based, the col a 0-indexed byte (servers count characters, in their own
+-- encoding). A location past the end of its file (from a server behind on edits) is
+-- left out.
+local function locations(answer)
+  local items, seen, lines = {}, {}, {}
+  for _, r in ipairs(answer or {}) do
+    for _, loc in ipairs(r.result) do
+      local uri, range = loc.uri or loc.targetUri, loc.range or loc.targetSelectionRange
+      local buf, filename = vim.uri_to_bufnr(uri), vim.uri_to_fname(uri)
+      lines[uri] = lines[uri] or code.lines(filename, buf)
+      local first, last = lines[uri][range.start.line + 1], lines[uri][range['end'].line + 1]
+      if first and last then
+        local encoding = r.client.offset_encoding
+        local item = {
+          filename = filename,
+          buf = buf,
+          pos = { range.start.line + 1, vim.str_byteindex(first, encoding, range.start.character, false) },
+          end_pos = { range['end'].line + 1, vim.str_byteindex(last, encoding, range['end'].character, false) },
+        }
+        local key = filename .. ':' .. item.pos[1] .. ':' .. item.pos[2]
+        if not seen[key] then -- (servers sharing a file can both answer)
+          seen[key] = true
+          items[#items + 1] = item
+        end
+      end
+    end
+  end
+  return items
+end
+
+-------------------- Code
+
+-- The references the list shows are marked in their files' buffers too, as the list
+-- marks them. Each gets an extmark there, without highlight (so it moves with edits),
+-- once the buffer is loaded; the decoration provider highlights those in view (M.mark),
+-- in the panel's tab page only.
+
+-- Redraw the windows of this tab page showing a buffer of `bufs` ([buf] = anything), with
+-- the next screen update (without `flush = false`, nvim__redraw draws the screen at once)
+local function redraw_code(bufs)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if bufs[vim.api.nvim_win_get_buf(win)] then
+      vim.api.nvim__redraw({ win = win, valid = false, flush = false })
+    end
+  end
+end
+
+-- Set the extmarks on the references the list shows in `buf`, if not done yet and it's
+-- loaded
+local function track(buf)
+  local refs = list.code[buf]
+  if refs.marked or not vim.api.nvim_buf_is_loaded(buf) then
+    return
+  end
+  for _, ref in ipairs(refs) do
+    vim.api.nvim_buf_set_extmark(buf, code_ns, ref.pos[1] - 1, ref.pos[2], {
+      end_row = ref.end_pos[1] - 1,
+      end_col = ref.end_pos[2],
+      strict = false,
+    })
+  end
+  refs.marked = true
+end
+
+-- Mark the references of `files` (see code.prepare) in the code, in place of those
+-- marked so far; none without `files`
+local function mark_code(files)
+  local redraw = {} -- the buffers that had some, and those getting some
+  for buf, refs in pairs(list.code) do
+    redraw[buf] = true
+    if refs.marked and vim.api.nvim_buf_is_valid(buf) then
+      vim.api.nvim_buf_clear_namespace(buf, code_ns, 0, -1)
+    end
+  end
+  list.code = {}
+  for _, f in ipairs(files or {}) do
+    redraw[f.buf] = true
+    -- (a file reached by two paths, as through a symlink, is one buffer)
+    list.code[f.buf] = vim.list_extend(list.code[f.buf] or {}, f.refs)
+  end
+  for buf in pairs(list.code) do
+    track(buf)
+  end
+  redraw_code(redraw)
+end
+
+-- Highlight the references the list shows in `buf`, rows `toprow`..`botrow` (0-indexed)
+-- of it being drawn: RefsMatch (in the panel's tab page only)
+function M.mark(buf, toprow, botrow)
+  if not (list.code[buf] and M.is_open()) then
+    return
+  end
+  track(buf) -- (loaded since the list showed them)
+  local opts = { details = true, overlap = true }
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, code_ns, { toprow, 0 }, { botrow, -1 }, opts)) do
+    vim.api.nvim_buf_set_extmark(buf, code_ns, m[2], m[3], {
+      end_row = m[4].end_row,
+      end_col = m[4].end_col,
+      hl_group = 'RefsMatch',
+      priority = CODE_PRIORITY,
+      ephemeral = true,
+    })
+  end
 end
 
 -------------------- Pane
@@ -213,21 +342,26 @@ end
 
 -- Update the pane: while you browse the list, the reference under its cursor; in the
 -- code, what the definition lookup for the cursor found, once it's in. Closes the pane
--- once the list is gone.
+-- once the list is gone (closed other than by M.close, as by :only), and drops the marks
+-- of its references in the code.
 function M.sync()
   if not valid(list.win) then
     if valid(pane.win) then
       pcall(vim.api.nvim_win_close, pane.win, true)
     end
     pane.win = nil
+    mark_code()
     return
   elseif not M.is_open() then
     return -- (open in another tab page)
   end
   if vim.api.nvim_get_current_win() ~= list.win then
-    local cursor = vim.api.nvim_win_get_cursor(0)
-    local entry = answers.at(vim.api.nvim_get_current_buf(), { cursor[1] - 1, cursor[2] })
-    return pane_show(entry and entry.def) -- nil until the lookup is in
+    local buf, cursor = vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)
+    local entry = answers.at(buf, { cursor[1] - 1, cursor[2] })
+    if not (entry and entry.defs ~= nil) then
+      return pane_show(nil) -- (until the lookup is in)
+    end
+    return pane_show(locations(entry.defs)[1] or false)
   end
   pane_show(selected())
 end
@@ -245,10 +379,10 @@ function M.sync_later()
   end
 end
 
--- Look up the definition of the symbol under the cursor for the pane
+-- Look up the definitions of the symbol under the cursor, for the pane
 function M.definition()
   local buf, cursor = vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)
-  answers.ask(buf, { cursor[1] - 1, cursor[2] }, 'def', M.sync)
+  answers.ask(buf, { cursor[1] - 1, cursor[2] }, 'defs', M.sync)
 end
 
 -------------------- List
@@ -317,7 +451,7 @@ local function render(files, lnum_width, code_buf)
       add({
         { ' ' },
         { more and '├╴' or '└╴', 'LineNr' },
-        item.ref_kind == 'Call' and { '󰊕 ', 'Function' } or { '  ' },
+        KIND_ICONS[item.ref_kind] or { '  ' },
         { ('%' .. lnum_width .. 'd'):format(item.pos[1]), 'LineNr' },
         { ' ' },
         { item.code }, -- (last: see M.highlight)
@@ -431,73 +565,108 @@ local function mark_current(row, k)
   end
 end
 
--- Put the list's cursor on the item holding the reference at `pos` in `code_buf`, and
--- mark that reference as the current one; else on its file's header (not while you
--- browse the list)
+-- Mark the reference at `pos` in `code_buf` as the current one, and put the list's
+-- cursor on the item holding it, else on its file's header (the cursor stays put while
+-- you browse the list: M.show can draw it again then)
 local function follow(code_buf, pos)
-  if vim.api.nvim_get_current_win() == list.win then
-    return
-  end
-  local header
+  local at, header
   for i, row in ipairs(list.rows) do
     local k = row.item and ref_at(row.item, code_buf, pos)
     if k then
+      at = i
       mark_current(i, k)
-      return vim.api.nvim_win_set_cursor(list.win, { i, 0 })
+      break
     elseif not row.item and row.file.buf == code_buf then
       header = header or i
     end
   end
-  mark_current()
-  vim.api.nvim_win_set_cursor(list.win, { header or 1, 0 })
+  if not at then
+    mark_current()
+  end
+  if vim.api.nvim_get_current_win() ~= list.win then
+    vim.api.nvim_win_set_cursor(list.win, { at or header or 1, 0 })
+  end
 end
 
--- The locations in `refs` (see refs.answers) as code.prepare takes them: { filename,
--- buf, pos, end_pos }, positions as { row, col }, the row 1-based, the col a 0-indexed
--- byte (servers count characters, in their own encoding). A location past the end of
--- its file (from a server behind on edits) is left out.
-local function refs_items(refs)
-  local items, seen, lines = {}, {}, {}
-  for _, r in ipairs(refs or {}) do
-    for _, loc in ipairs(r.result) do
-      local uri, range = loc.uri or loc.targetUri, loc.range or loc.targetSelectionRange
-      local buf, filename = vim.uri_to_bufnr(uri), vim.uri_to_fname(uri)
-      lines[uri] = lines[uri] or code.lines(filename, buf)
-      local first, last = lines[uri][range.start.line + 1], lines[uri][range['end'].line + 1]
-      if first and last then
-        local encoding = r.client.offset_encoding
-        local item = {
-          filename = filename,
-          buf = buf,
-          pos = { range.start.line + 1, vim.str_byteindex(first, encoding, range.start.character, false) },
-          end_pos = { range['end'].line + 1, vim.str_byteindex(last, encoding, range['end'].character, false) },
-        }
-        local key = filename .. ':' .. item.pos[1] .. ':' .. item.pos[2]
-        if not seen[key] then -- (servers sharing a file can both answer)
-          seen[key] = true
-          items[#items + 1] = item
-        end
+-- Whether position `p` ({ row, col }) comes before `q`
+local function before(p, q)
+  return p[1] < q[1] or (p[1] == q[1] and p[2] < q[2])
+end
+
+-- Set `def` on the references (see locations) that are definitions. What the servers
+-- call definitions, `defs`, can be assignments too (lua_ls, pyright and bashls give
+-- those): each is the first reference in its file that its range overlaps (a server can
+-- give a whole construct's, as bashls gives a function's: uses of the symbol in its body
+-- fall in it too), and of these, the declarations are the definitions (see
+-- code.assignment). A symbol that only ever gets assigned (a Lua field, a Python or
+-- shell variable) is defined where it's first assigned, in the file of the first.
+local function mark_definitions(refs, defs)
+  local found = {}
+  for _, def in ipairs(defs) do
+    local first
+    for _, ref in ipairs(refs) do
+      local overlap = ref.buf == def.buf and not before(def.end_pos, ref.pos) and not before(ref.end_pos, def.pos)
+      if overlap and not (first and before(first.pos, ref.pos)) then
+        first = ref
       end
     end
+    found[#found + 1] = first
   end
-  return items
+  local parsers, declared = {}, false
+  for _, ref in ipairs(found) do
+    if code.assignment(ref, parsers) ~= 'affectation' then
+      ref.def, declared = true, true
+    end
+  end
+  if declared or #found == 0 then
+    return
+  end
+  local first
+  for _, ref in ipairs(refs) do
+    if ref.buf == found[1].buf and not (first and before(first.pos, ref.pos)) and code.assignment(ref, parsers) then
+      first = ref
+    end
+  end
+  first = first or found[1]
+  first.def = true
 end
 
--- Show `refs` (see refs.answers), the references of the symbol at `pos` in `code_buf`
+-- Show `refs` (see refs.answers), the references of the symbol at `pos` in `code_buf`,
+-- its definitions marked: when they aren't known yet, it shows them again once they are
+-- (if the list still shows that position)
 function M.show(code_buf, pos, refs)
   if not M.is_open() then
     return
   end
-  list.key = key_of(code_buf, pos)
-  local files, lnum_width = code.prepare(refs_items(refs))
+  local key = key_of(code_buf, pos)
+  list.key = key
+  local entry, items = answers.at(code_buf, pos), locations(refs)
+  local defs = entry and entry.defs
+  mark_definitions(items, locations(defs))
+  local files, lnum_width = code.prepare(items)
   local view = vim.api.nvim_win_call(list.win, vim.fn.winsaveview)
   render(files, lnum_width, code_buf)
+  -- The view keeps the context lines the old list showed above its top line (topfill):
+  -- no more than the new list has there, or Neovim draws the rest as a diff's deleted
+  -- lines ('-'s), and in an empty list never takes them away
+  local above = list.rows[math.min(view.topline, #list.rows) - 1] -- (its context lines go there)
+  view.topfill = math.min(view.topfill, above and above.lines and #above.lines or 0)
   vim.api.nvim_win_call(list.win, function()
     vim.fn.winrestview(view)
   end)
+  mark_code(files)
   vim.wo[list.win].cursorline = #list.rows > 0 -- (an empty list still has a line to highlight)
   follow(code_buf, pos)
   M.sync()
+  if defs == nil then
+    answers.ask(code_buf, pos, 'defs', function(found)
+      -- (not once the code is edited: the references' positions are its text's before,
+      -- and the code would mark them where they were)
+      if found and #found > 0 and list.key == key and key_of(code_buf, pos) == key then
+        M.show(code_buf, pos, refs)
+      end
+    end)
+  end
 end
 
 -- Show the references of the symbol under the cursor, once the servers have answered
@@ -653,6 +822,7 @@ function M.close()
     end
   end
   pane.win, list.win = nil, nil
+  mark_code()
 end
 
 -- Open the panel on the right, then show the symbol under the cursor
@@ -708,6 +878,22 @@ function M.toggle()
   else
     M.open()
   end
+end
+
+-- Close the panel when the window being quit (QuitPre) is the tab page's last code
+-- window, so :q there quits Neovim, or closes the tab page or the window, as it would
+-- without the panel
+function M.quitting()
+  if not M.is_open() then
+    return
+  end
+  local win = vim.api.nvim_get_current_win()
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if w ~= win and code_window(w) then
+      return -- (code is left to show the references of)
+    end
+  end
+  M.close()
 end
 
 -- Track the code window last entered; keep the pane in step with where you are. The
