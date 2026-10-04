@@ -45,13 +45,61 @@ local function is_call(b, ref)
   return after:match('^%s*%(') ~= nil and not is_def
 end
 
+-- The parser of `filename`'s syntax tree, injected languages included: its buffer's
+-- (`buf`) when loaded, else one of its text read from disk; false when it has none
+local function parser_of(filename, buf)
+  if buf and vim.api.nvim_buf_is_loaded(buf) then
+    local ok, parser = pcall(vim.treesitter.get_parser, buf)
+    return ok and parser or false
+  end
+  local lines = M.lines(filename)
+  local ok, ft = pcall(vim.filetype.match, { filename = filename, contents = lines })
+  local lang = ok and ft and vim.treesitter.language.get_lang(ft)
+  local parsed, parser = pcall(vim.treesitter.get_string_parser, table.concat(lines, '\n'), lang)
+  return lang and parsed and parser or false
+end
+
+-- Whether reference `ref` ({ filename, buf, pos }, see M.prepare) is what an assignment
+-- assigns, its left side: 'declaration' when the assignment declares it (Lua's
+-- `local x = 1`, bash's `local x=1`), else 'affectation' (`x = 1`, `M.x = 1`, `x += 1`,
+-- bash's `x=1`); nil when it isn't (another form of declaration, as `function M.x()`,
+-- JavaScript's `let x = 1`, Go's `x := 1` or a parameter, or a use). Read from the syntax
+-- tree, through the nearest assignment around it (a destructuring pattern isn't one);
+-- `parsers` keeps the files' parsers from one call to the next.
+function M.assignment(ref, parsers)
+  if parsers[ref.filename] == nil then
+    parsers[ref.filename] = parser_of(ref.filename, ref.buf)
+  end
+  local parser = parsers[ref.filename]
+  if not parser then
+    return nil
+  end
+  local row, col = ref.pos[1] - 1, ref.pos[2]
+  parser:parse({ row, row + 1 })
+  local node = parser:named_node_for_range({ row, col, row, col + 1 }, { ignore_injections = false })
+  local parent = node and node:parent()
+  while parent do
+    local type = parent:type()
+    if type:find('assignment') and not type:find('pattern') then
+      local left = parent:named_child(0)
+      if not (left and left:equal(node)) then
+        return nil -- (on its right side)
+      end
+      local wrapper = parent:parent()
+      return wrapper and wrapper:type():find('declaration') and 'declaration' or 'affectation'
+    end
+    node, parent = parent, parent:parent()
+  end
+end
+
 -- Prepare `refs`, references ({ filename, buf, pos, end_pos }, positions as { row,
--- col }: the row 1-based, the col a 0-indexed byte), for the list: grouped by file, an
--- item ({ filename, buf, pos, refs }) per line of code holding some, the references on
--- it in its `refs`, left to right, `pos` the first's.
+-- col }: the row 1-based, the col a 0-indexed byte; `def` set on a definition), for the
+-- list: grouped by file, an item ({ filename, buf, pos, refs }) per line of code holding
+-- some, the references on it in its `refs`, left to right, `pos` the first's.
 --
--- Each item gets a `ref_kind`, `Call` when one of its references is a call (see
--- is_call), else `Reference`: it marks the calls in the list.
+-- Each item gets a `ref_kind`: `Definition` when one of its references is a definition,
+-- else `Call` when one is a call (see is_call), else `Reference`: it marks the
+-- definitions and the calls in the list.
 --
 -- Each item also gets the code the list shows for it: its line (`code`, each of its
 -- references at bytes `match` of it, the end excluded) and the REF_CONTEXT lines around
@@ -140,7 +188,9 @@ function M.prepare(refs)
       for _, ref in ipairs(item.refs) do
         local to = ref.end_pos[1] == ref.pos[1] and shown_col(b, text, ref.end_pos[2]) or #item.code
         ref.match = { shown_col(b, text, ref.pos[2]), to }
-        if is_call(b, ref) then
+        if ref.def then
+          item.ref_kind = 'Definition'
+        elseif item.ref_kind == 'Reference' and is_call(b, ref) then
           item.ref_kind = 'Call'
         end
       end
