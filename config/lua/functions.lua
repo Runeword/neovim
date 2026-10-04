@@ -431,6 +431,7 @@ local RAPID_MS = 100
 local sticky_ns = vim.api.nvim_create_namespace('sticky_motion')
 local sticky_active = false
 local sticky_armed = false
+local sticky_buf = nil -- the buffer whose hjkl the submode maps while active
 local sticky_rapid_last = 0 -- vim.uv.now() of the previous j/k tap while active (rapid-exit)
 
 local function sticky_stop()
@@ -439,16 +440,31 @@ local function sticky_stop()
   end
   sticky_active = false
   vim.on_key(nil, sticky_ns)
-  for _, key in ipairs(STICKY_KEYS) do
-    pcall(vim.keymap.del, 'n', key, { buffer = 0 })
+  if sticky_buf and vim.api.nvim_buf_is_valid(sticky_buf) then
+    for _, key in ipairs(STICKY_KEYS) do
+      pcall(vim.keymap.del, 'n', key, { buffer = sticky_buf })
+    end
   end
+  sticky_buf = nil
 end
 
 local function sticky_start()
+  local buf = vim.api.nvim_get_current_buf()
   if sticky_active then
-    return
+    if sticky_buf == buf then
+      return
+    end
+    sticky_stop() -- (armed in another buffer: the submode moves on to this one)
+  end
+  -- Not in a buffer with hjkl of its own (a plugin's list, as the refs panel's j/k): the
+  -- submode's maps would replace them, then delete them on leaving
+  for _, key in ipairs(STICKY_KEYS) do
+    if vim.fn.maparg(key, 'n', false, true).buffer == 1 then
+      return
+    end
   end
   sticky_active = true
+  sticky_buf = buf
   sticky_rapid_last = 0 -- fresh burst window, so the first j/k tap is never "rapid"
   -- Buffer-local hjkl (shadowing j/k's 4-line jump and default h/l) do the moves;
   -- deleting them on exit restores the originals. j/k step one line (via jk_step, which
@@ -469,7 +485,7 @@ local function sticky_start()
         vim.cmd('normal! ' .. key) -- h / l: one-step horizontal move
         sticky_rapid_last = 0 -- h / l break the j/k burst chain
       end
-    end, { buffer = 0, desc = 'Sticky motion: ' .. key })
+    end, { buffer = sticky_buf, desc = 'Sticky motion: ' .. key })
   end
   -- Live only while active: observe (never consume) to catch the <Esc> exit.
   vim.on_key(function(_, typed)
