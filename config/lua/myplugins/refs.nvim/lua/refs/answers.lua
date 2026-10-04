@@ -7,8 +7,9 @@ local vim = vim
 --   refs: the references, as { client, result } per client serving them, with `other`
 --         set when a location besides the word itself came back (a hop lands there);
 --         false when no attached server serves references
---   def:  the definition to preview (an item), or false when it's in the same file (a
---         jump away) or there is none
+--   defs: the definitions, as { client, result } per client giving some (the pane
+--         previews the first, the list marks them); false when no attached server
+--         serves definitions
 local M = {}
 
 local memo = {} -- [buf] = { tick = changedtick, [row:col] = { refs, def, waiting } }
@@ -27,9 +28,14 @@ function M.at(buf, pos, create)
   return memo[buf][key]
 end
 
--- Forget every answer: an edit elsewhere can change what refers to what
-function M.forget()
-  memo = {}
+-- Forget the answers about `buf`, or every answer: an edit elsewhere can change what
+-- refers to what, and a server attaching can answer what was asked before it came
+function M.forget(buf)
+  if buf then
+    memo[buf] = nil
+  else
+    memo = {}
+  end
 end
 
 -- A hop lands on a word whose references are `refs`
@@ -84,8 +90,8 @@ function fetch.refs(buf, pos, done)
   end
 end
 
--- `def` for `pos`: the first definition a client gives, when it's in another file
-function fetch.def(buf, pos, done)
+-- `defs` for `pos`, asking every attached client that serves definitions
+function fetch.defs(buf, pos, done)
   -- (a request no attached server can answer would raise an error notification)
   if #vim.lsp.get_clients({ bufnr = buf, method = 'textDocument/definition' }) == 0 then
     return done(false)
@@ -93,34 +99,23 @@ function fetch.def(buf, pos, done)
   vim.lsp.buf_request_all(buf, 'textDocument/definition', function(client)
     return position_params(client, buf, pos)
   end, function(results)
-    local failed = false
+    local defs, failed = {}, false
     for id, res in pairs(results) do
       failed = failed or res.err ~= nil
       local client = vim.lsp.get_client_by_id(id)
       local locs = res.result and (vim.islist(res.result) and res.result or { res.result }) or {}
-      local it = client and locs[1] and vim.lsp.util.locations_to_items({ locs[1] }, client.offset_encoding)[1]
-      if it then
-        -- Same buffer = same file (buffers are matched by file, symlinks included)
-        local def_buf = vim.uri_to_bufnr(locs[1].uri or locs[1].targetUri)
-        return done(def_buf ~= buf and {
-          filename = it.filename,
-          buf = def_buf,
-          pos = { it.lnum, it.col - 1 },
-          end_pos = { it.end_lnum, it.end_col - 1 },
-        })
+      if client and #locs > 0 then
+        defs[#defs + 1] = { client = client, result = locs }
       end
     end
-    if not failed then
-      done(false)
-    else
-      done(nil)
-    end
+    -- (an error is no answer, unless another server's definitions made one)
+    done((#defs > 0 or not failed) and defs or nil)
   end)
 end
 
 local ASK_STALE_MS = 3000 -- a question left unanswered this long is asked again
 
--- Calls back with the `what` answer ('refs' or 'def') about `pos` in `buf`, async:
+-- Calls back with the `what` answer ('refs' or 'defs') about `pos` in `buf`, async:
 -- memoized, with one request shared by everyone asking meanwhile. nil means no answer
 -- (an error), not memoized.
 function M.ask(buf, pos, what, cb)
