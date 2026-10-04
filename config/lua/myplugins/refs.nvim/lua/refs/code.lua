@@ -1,80 +1,310 @@
 local vim = vim
 
 -- The code the references panel shows for each line holding references: that line,
--- with REF_CONTEXT lines around it, highlighted as in its file.
+-- with REF_CONTEXT lines around it, highlighted as in its file. A file that isn't loaded
+-- is read from disk, once per version of it, and parsed whole, once too; a big one (as
+-- the config's b:big_file says of a loaded one) isn't parsed, and shows unhighlighted.
 local M = {}
 
 local REF_CONTEXT = 1 -- lines of code shown above and below each reference
-local CONTEXT_MARGIN = 20 -- lines parsed around a block of a file that isn't loaded
+local LINE_CAP = 500 -- bytes of a line shown (the list doesn't wrap): a minified line costs no more
+local BIG_BYTES = 1024 * 1024 -- a file this big isn't parsed (the config's b:big_file threshold),
+local BIG_LINE = 2048 -- nor one whose lines are this long on average (minified)
+local MAX_READ = 16 * 1024 * 1024 -- nor read past this size
+local KEPT_BYTES = 32 * 1024 * 1024 -- text of files kept from one show to the next
+local KEPT_PARSERS = 16 -- and whose syntax tree
+local WINDOW = 60 -- lines parsed around a reference in a big file, to tell its kind
+local WHOLE_LINES = 1500 -- a file read from disk up to this long is parsed whole to highlight it,
+local CONTEXT_MARGIN = 20 -- a longer one by block, with this many lines around it
 
--- The lines of `filename`: its buffer's when loaded, else read from disk
+local uses = 0 -- a clock for the caches' least recently used
+
+-- Keep `cache` ([key] = { used, bytes, ... }) to `max` entries, or to `max_bytes` of them:
+-- drop the least recently used
+local function trim(cache, max, max_bytes)
+  while true do
+    local count, bytes, oldest = 0, 0, nil
+    for key, e in pairs(cache) do
+      count, bytes = count + 1, bytes + (e.bytes or 0)
+      if not oldest or e.used < cache[oldest].used then
+        oldest = key
+      end
+    end
+    if count <= 1 or (count <= max and bytes <= (max_bytes or math.huge)) then
+      return
+    end
+    cache[oldest] = nil
+  end
+end
+
+-- The version of `filename` on disk (modification time and size), and its size
+local function disk_version(filename)
+  local stat = vim.uv.fs_stat(filename)
+  if not stat then
+    return '-', 0
+  end
+  return ('f%d.%d.%d'):format(stat.mtime.sec, stat.mtime.nsec, stat.size), stat.size
+end
+
+local files = {} -- [filename] = { version, lines, bytes, used, ft }
+
+-- `filename` as read from disk ({ version, lines, bytes }), kept while unchanged there
+local function read(filename)
+  local version, size = disk_version(filename)
+  uses = uses + 1
+  local f = files[filename]
+  if f and f.version == version then
+    f.used = uses
+    return f
+  end
+  local lines = {}
+  if size <= MAX_READ then
+    local ok, read_lines = pcall(vim.fn.readfile, filename)
+    if ok then
+      lines = read_lines
+      for i, line in ipairs(lines) do
+        if line:find('\n', 1, true) then
+          lines[i] = line:gsub('\n', '\0') -- (readfile gives a NUL as a NL)
+        end
+      end
+    end
+  end
+  f = { version = version, lines = lines, bytes = size, used = uses }
+  files[filename] = f
+  if size > 0 then
+    trim(files, math.huge, KEPT_BYTES)
+  end
+  return f
+end
+
+-- The lines of `filename`: its buffer's when loaded, else read from disk (the table is
+-- shared: not to be changed)
 function M.lines(filename, buf)
   if buf and vim.api.nvim_buf_is_loaded(buf) then
     return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   end
-  local ok, lines = pcall(vim.fn.readfile, filename)
-  return ok and lines or {}
+  return read(filename).lines
 end
 
--- Where byte `col` of `line`, a line of block `b` (see M.prepare), falls in the code the
--- list shows for it: dedented with the block, tabs expanded
-local function shown_col(b, line, col)
-  return #(line:sub(b.dedent + 1, col):gsub('\t', b.tab))
+-- The version of `filename`'s text: its buffer's changedtick while that has changes not
+-- written, else the file's on disk
+function M.version(filename, buf)
+  if buf and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
+    return 'b' .. vim.api.nvim_buf_get_changedtick(buf)
+  end
+  return (disk_version(filename))
 end
 
--- Whether reference `ref`, on a line of block `b` (see M.prepare), is a call: the symbol
--- is immediately followed by `(`. Servers answer bare locations with no such tag, so we
--- read the source line and derive it ourselves.
+-- `filename` as read from disk: { version, lines (shared: not to be changed), bytes }
+M.file = read
+
+-- Whether `filename` is too big to parse: the config's b:big_file says so of a loaded
+-- buffer, else its size or the average length of its lines (read from disk as `f`, if
+-- given)
+function M.big(filename, buf, f)
+  local bytes, count
+  if buf and vim.api.nvim_buf_is_loaded(buf) then
+    if vim.b[buf].big_file then
+      return true
+    end
+    count = vim.api.nvim_buf_line_count(buf)
+    bytes = vim.api.nvim_buf_get_offset(buf, count)
+  else
+    f = f or read(filename)
+    bytes, count = f.bytes, #f.lines
+  end
+  return bytes > BIG_BYTES or (count > 0 and bytes / count > BIG_LINE)
+end
+
+-- The treesitter language of `filename`, read from disk as `f` (see read)
+local function lang_of(filename, f)
+  if f.ft == nil then
+    local ok, ft = pcall(vim.filetype.match, { filename = filename, contents = f.lines })
+    f.ft = ok and ft or false
+  end
+  return f.ft and f.ft ~= '' and vim.treesitter.language.get_lang(f.ft) or nil
+end
+
+local parsers = {} -- [filename] = { version, parser, text, used }
+
+-- A parser of `filename` read from disk, whole (injected languages included), and its
+-- text; kept while the file is unchanged. Its parser is nil when it has no language.
+local function file_parser(filename)
+  local f = read(filename)
+  uses = uses + 1
+  local p = parsers[filename]
+  if p and p.version == f.version then
+    p.used = uses
+    return p
+  end
+  local lang, text = lang_of(filename, f), table.concat(f.lines, '\n')
+  local ok, parser = pcall(vim.treesitter.get_string_parser, text, lang)
+  p = { version = f.version, parser = lang and ok and parser or nil, text = text, used = uses }
+  parsers[filename] = p
+  trim(parsers, KEPT_PARSERS)
+  return p
+end
+
+-- `line` cut to LINE_CAP bytes, at a character's start
+local function cap(line)
+  if #line <= LINE_CAP then
+    return line
+  end
+  local cut = LINE_CAP
+  while cut > 0 and (line:byte(cut + 1) or 0) >= 0x80 and line:byte(cut + 1) < 0xC0 do
+    cut = cut - 1
+  end
+  return line:sub(1, cut)
+end
+
+-- `line` with its tabs expanded to the next tab stop (every `ts` columns, as a window
+-- shows them), and the bytes each adds ({ its byte (1-based), bytes added } in order),
+-- nil without tabs
+local function expand(line, ts)
+  if not line:find('\t', 1, true) then
+    return line, nil
+  end
+  local parts, shifts, width, from = {}, {}, 0, 1
+  while true do
+    local tab = line:find('\t', from, true)
+    local text = line:sub(from, (tab or #line + 1) - 1)
+    parts[#parts + 1] = text
+    width = width + vim.api.nvim_strwidth(text)
+    if not tab then
+      break
+    end
+    local n = ts - width % ts
+    parts[#parts + 1] = (' '):rep(n)
+    width = width + n
+    shifts[#shifts + 1] = { tab, n - 1 }
+    from = tab + 1
+  end
+  return table.concat(parts), shifts
+end
+
+-- Where byte `col` (0-indexed) of row `r` of block `b` (see M.prepare) falls in the code
+-- the list shows for it: tabs expanded, dedented with the block
+local function shown_col(b, r, col)
+  local view, shifted = b.view[r - b.first + 1], col
+  for _, s in ipairs(view.shifts or {}) do
+    if s[1] > col then -- (the tabs before byte `col` of the line, not of its expansion)
+      break
+    end
+    shifted = shifted + s[2]
+  end
+  return math.max(math.min(shifted, #view.text) - b.dedent, 0)
+end
+
+-- The definition keywords before a name (`function M.foo(`, `def foo(`, `func (r T) foo(`,
+-- ...): that name followed by `(` isn't a call. Each must reach the name.
+local DEF_BEFORE = {
+  '^%s*local%s+function%s+$',
+  '^%s*function%f[^%w_]%s*%*?%s*[%w_%.:]*$', -- (not `functions.foo(`)
+  '^%s*async%s+function%s*%*?%s*$',
+  '^%s*export%s+function%s+$',
+  '^%s*export%s+async%s+function%s+$',
+  '^%s*export%s+default%s+function%s+$',
+  '^%s*def%s+$',
+  '^%s*async%s+def%s+$',
+  '^%s*func%s+$',
+  '^%s*func%s*%b()%s*$',
+  '^%s*fn%s+$',
+  '^%s*pub%s+fn%s+$',
+  '^%s*pub%b()%s+fn%s+$',
+  '^%s*async%s+fn%s+$',
+  '^%s*pub%s+async%s+fn%s+$',
+}
+-- What follows a called name: `(`, maybe after Rust's type arguments (`foo::<T>(`), or
+-- `?.(`; in a language with type arguments also those (`foo<T>(`, right after the name:
+-- `foo < a or b > (c)` is no call); in Lua a table or a string (`foo{...}`, `foo 'x'`)
+local CALL_AFTER = { '^%s*%(', '^::%b<>%(', '^%?%.%(' }
+local GENERIC_CALL_AFTER = { '^%b<>%(' }
+local LUA_CALL_AFTER = { '^%s*{', '^%s*["\']', '^%s*%[=*%[' }
+local GENERIC_LANGS = {
+  typescript = true,
+  tsx = true,
+  c_sharp = true,
+  cpp = true,
+  java = true,
+  kotlin = true,
+  dart = true,
+  swift = true,
+}
+
+-- Whether reference `ref`, on a line of block `b` (see M.prepare), is a call. Servers
+-- answer bare locations with no such tag, so we read the source line and derive it
+-- ourselves. (C-family definitions have no keyword and still read as calls.)
 local function is_call(b, ref)
   local line = b.lines[ref.end_pos[1] - b.first + 1] or ''
-  -- `end_pos[2]` is a 0-indexed byte column, so sub(col + 1) starts at the
-  -- first character past the symbol.
-  local after = line:sub(ref.end_pos[2] + 1)
-  -- A definition's name (`function foo(`, `def foo(`, …) is also followed by
-  -- `(` — don't count it as a call. Anchored at the start of the line so a
-  -- genuine call such as `function_tbl.foo(` is not mistaken for a def.
-  -- (C-family definitions have no keyword and will still read as calls.)
-  local before = line:sub(1, ref.pos[2])
-  local is_def = before:match('^%s*function%s')
-    or before:match('^%s*local%s+function%s')
-    or before:match('^%s*async%s+function%s')
-    or before:match('^%s*def%s')
-    or before:match('^%s*async%s+def%s')
-    or before:match('^%s*func%s')
-    or before:match('^%s*fn%s')
-  return after:match('^%s*%(') ~= nil and not is_def
+  local after = line:sub(ref.end_pos[2] + 1) -- (end_pos[2] is a 0-indexed byte: the first past the symbol)
+  local called = false
+  local lang = b.file.lang
+  local patterns = { CALL_AFTER, GENERIC_LANGS[lang] and GENERIC_CALL_AFTER, lang == 'lua' and LUA_CALL_AFTER }
+  for i = 1, 3 do
+    for _, pattern in ipairs(patterns[i] or {}) do
+      called = called or after:find(pattern) ~= nil
+    end
+  end
+  if not called then
+    return false
+  end
+  local before = (b.lines[ref.pos[1] - b.first + 1] or ''):sub(1, ref.pos[2])
+  for _, pattern in ipairs(DEF_BEFORE) do
+    if before:find(pattern) then
+      return false
+    end
+  end
+  return true
 end
 
--- The parser of `filename`'s syntax tree, injected languages included: its buffer's
--- (`buf`) when loaded, else one of its text read from disk; false when it has none
-local function parser_of(filename, buf)
-  if buf and vim.api.nvim_buf_is_loaded(buf) then
-    local ok, parser = pcall(vim.treesitter.get_parser, buf)
-    return ok and parser or false
+-- Whether a node of `type` reaches an element of a container (`d[k]`, `arr[$i]`): what it
+-- holds is assigned, neither the container nor the index
+local function index_like(type)
+  return type:find('subscript') or (type:find('index') and not type:find('dot_index')) or type == 'element_reference'
+end
+
+-- Whether a node of `type` reaches a member of an object (`M.x`, `self.x`, `a.b`): only
+-- its last part, the member, is assigned
+local function member_like(type)
+  for _, part in ipairs({ 'member', 'attribute', 'selector', 'dot_index', 'field_expression', 'field_access' }) do
+    if type:find(part) then
+      return true
+    end
   end
-  local lines = M.lines(filename)
-  local ok, ft = pcall(vim.filetype.match, { filename = filename, contents = lines })
-  local lang = ok and ft and vim.treesitter.language.get_lang(ft)
-  local parsed, parser = pcall(vim.treesitter.get_string_parser, table.concat(lines, '\n'), lang)
-  return lang and parsed and parser or false
+  return type == 'call' -- (Ruby's `a.b = 1`)
 end
 
 -- Whether reference `ref` ({ filename, buf, pos }, see M.prepare) is what an assignment
 -- assigns, its left side: 'declaration' when the assignment declares it (Lua's
 -- `local x = 1`, bash's `local x=1`), else 'affectation' (`x = 1`, `M.x = 1`, `x += 1`,
 -- bash's `x=1`); nil when it isn't (another form of declaration, as `function M.x()`,
--- JavaScript's `let x = 1`, Go's `x := 1` or a parameter, or a use). Read from the syntax
--- tree, through the nearest assignment around it (a destructuring pattern isn't one);
--- `parsers` keeps the files' parsers from one call to the next.
-function M.assignment(ref, parsers)
-  if parsers[ref.filename] == nil then
-    parsers[ref.filename] = parser_of(ref.filename, ref.buf)
+-- JavaScript's `let x = 1`, Go's `x := 1` or a parameter, or a use, `M` in `M.x = 1` and
+-- `k` in `d[k] = 1` included). Read from the syntax tree, through the nearest assignment
+-- around it (a destructuring pattern isn't one); for a big file, from a parse of the
+-- lines around it.
+function M.assignment(ref)
+  local row, col = ref.pos[1] - 1, ref.pos[2]
+  local parser, from = nil, 0
+  if ref.buf and vim.api.nvim_buf_is_loaded(ref.buf) then
+    if M.big(ref.filename, ref.buf) then
+      return nil
+    end
+    local ok, p = pcall(vim.treesitter.get_parser, ref.buf)
+    parser = ok and p or nil
+  elseif M.big(ref.filename) then
+    local f = read(ref.filename)
+    local lang = lang_of(ref.filename, f)
+    from = math.max(row - WINDOW, 0)
+    local text = table.concat(vim.list_slice(f.lines, from + 1, row + WINDOW + 1), '\n')
+    local ok, p = pcall(vim.treesitter.get_string_parser, text, lang)
+    parser = lang and ok and p or nil
+  else
+    parser = file_parser(ref.filename).parser
   end
-  local parser = parsers[ref.filename]
   if not parser then
     return nil
   end
-  local row, col = ref.pos[1] - 1, ref.pos[2]
+  row = row - from
   parser:parse({ row, row + 1 })
   local node = parser:named_node_for_range({ row, col, row, col + 1 }, { ignore_injections = false })
   local parent = node and node:parent()
@@ -87,6 +317,13 @@ function M.assignment(ref, parsers)
       end
       local wrapper = parent:parent()
       return wrapper and wrapper:type():find('declaration') and 'declaration' or 'affectation'
+    elseif index_like(type) then
+      return nil
+    elseif member_like(type) then
+      local last = parent:named_child(parent:named_child_count() - 1)
+      if not (last and last:equal(node)) then
+        return nil -- (the object, not its member)
+      end
     end
     node, parent = parent, parent:parent()
   end
@@ -103,36 +340,41 @@ end
 --
 -- Each item also gets the code the list shows for it: its line (`code`, each of its
 -- references at bytes `match` of it, the end excluded) and the REF_CONTEXT lines around
--- it (`above`, `below`: row ranges). Items close by share
--- a `block` of consecutive lines, so no line shows twice, dedented as a whole so the
--- indentation inside it stays true; `gap` marks a block that follows another in the
--- same file. Returns the files ({ filename, buf, refs, its items in order }) and the
--- widest line number shown, to right-align the numbers.
-function M.prepare(refs)
-  local files, by_name, lnum_width = {}, {}, 1
+-- it (`above`, `below`: row ranges). Items close by share a `block` of consecutive
+-- lines, so no line shows twice, dedented as a whole so the indentation inside it stays
+-- true, tabs expanded to the file's tab stops; `gap` marks a block that follows another
+-- in the same file. Lines are cut to LINE_CAP bytes. `read_files` ([filename] = as
+-- M.file gives it) holds files already read for this (a list of more files than the
+-- cache keeps would read them all again). Returns the files ({ filename, buf, refs, its
+-- items in order }) and the widest line number shown, to right-align the numbers.
+function M.prepare(refs, read_files)
+  local files_list, by_name, lnum_width = {}, {}, 1
   for _, ref in ipairs(refs) do
     local f = by_name[ref.filename]
     if not f then
       f = { filename = ref.filename, buf = ref.buf, refs = {} }
       by_name[ref.filename] = f
-      files[#files + 1] = f
+      files_list[#files_list + 1] = f
     end
     f.refs[#f.refs + 1] = ref
   end
 
-  for _, f in ipairs(files) do
+  for _, f in ipairs(files_list) do
     -- The file's lines: its buffer's when loaded, else from disk (whole, to know where
     -- it ends), so cross-file refs work too
     local loaded = f.buf and vim.api.nvim_buf_is_loaded(f.buf)
-    local all = not loaded and M.lines(f.filename) or nil
-    local count = loaded and vim.api.nvim_buf_line_count(f.buf) or #all
-    local tab = (' '):rep(loaded and vim.bo[f.buf].tabstop or vim.o.tabstop)
-    local ok, ft = true, loaded and vim.bo[f.buf].filetype
-    if not loaded then
-      ok, ft = pcall(vim.filetype.match, { filename = f.filename, contents = all })
+    local disk = not loaded and (read_files and read_files[f.filename] or read(f.filename)) or nil
+    local count = loaded and vim.api.nvim_buf_line_count(f.buf) or #disk.lines
+    local ts = loaded and vim.bo[f.buf].tabstop or vim.o.tabstop
+    local lang
+    if loaded then
+      local ft = vim.bo[f.buf].filetype
+      lang = ft ~= '' and vim.treesitter.language.get_lang(ft) or nil
+    else
+      lang = lang_of(f.filename, disk)
     end
     -- Where M.highlight finds the code to parse, for the file's blocks
-    local file = { lang = ok and ft and ft ~= '' and vim.treesitter.language.get_lang(ft) or nil, lines = all }
+    local file = { filename = f.filename, lang = lang, big = M.big(f.filename, f.buf, disk) }
     if loaded then
       file.buf, file.tick = f.buf, vim.api.nvim_buf_get_changedtick(f.buf)
     end
@@ -157,7 +399,7 @@ function M.prepare(refs)
       local last = math.min(row + REF_CONTEXT, next_row - 1, count)
       local gap = block ~= nil and math.min(first, row) > shown + 1 -- lines left out since the last
       if not block or gap then
-        block = { first = math.min(first, row), file = file, tab = tab, highlights = {} }
+        block = { first = math.min(first, row), file = file, highlights = {} }
         blocks[#blocks + 1] = block
       end
       item.gap = gap and REF_CONTEXT > 0
@@ -169,11 +411,14 @@ function M.prepare(refs)
 
     for _, b in ipairs(blocks) do
       b.lines = loaded and vim.api.nvim_buf_get_lines(f.buf, b.first - 1, b.last, false)
-        or vim.list_slice(all, b.first, b.last)
-      b.dedent = math.huge -- the indentation its lines share, blank lines aside
-      for _, line in ipairs(b.lines) do
-        local indent = #line:match('^%s*')
-        if indent < #line then
+        or vim.list_slice(disk.lines, b.first, b.last)
+      b.view, b.dedent = {}, math.huge -- (dedent: the indentation its lines share, blank lines aside)
+      for i, line in ipairs(b.lines) do
+        b.lines[i] = cap(line)
+        local text, shifts = expand(b.lines[i], ts)
+        b.view[i] = { text = text, shifts = shifts }
+        local indent = #text:match('^ *')
+        if indent < #text and not text:match('^%s*$') then
           b.dedent = math.min(b.dedent, indent)
         end
       end
@@ -181,13 +426,12 @@ function M.prepare(refs)
     end
 
     for _, item in ipairs(f) do
-      local b = item.block
-      local text = b.lines[item.pos[1] - b.first + 1] or ''
-      item.code = (text:sub(b.dedent + 1):gsub('\t', b.tab))
+      local b, r = item.block, item.pos[1]
+      item.code = b.view[r - b.first + 1].text:sub(b.dedent + 1)
       item.ref_kind = 'Reference'
       for _, ref in ipairs(item.refs) do
-        local to = ref.end_pos[1] == ref.pos[1] and shown_col(b, text, ref.end_pos[2]) or #item.code
-        ref.match = { shown_col(b, text, ref.pos[2]), to }
+        local to = ref.end_pos[1] == ref.pos[1] and shown_col(b, r, ref.end_pos[2]) or #item.code
+        ref.match = { shown_col(b, r, ref.pos[2]), to }
         if ref.def then
           item.ref_kind = 'Definition'
         elseif item.ref_kind == 'Reference' and is_call(b, ref) then
@@ -196,7 +440,7 @@ function M.prepare(refs)
       end
     end
   end
-  return files, lnum_width
+  return files_list, lnum_width
 end
 
 -- Highlight chunks { text, hl } for each of `lines`, rows first.. (0-indexed) of
@@ -238,7 +482,7 @@ local function highlight_rows(parser, source, first, lines)
   end
   for _, c in ipairs(captures) do
     for r = math.max(c[1], 0), math.min(c[3], #lines - 1) do
-      for byte = (r == c[1] and c[2] or 0) + 1, r == c[3] and c[4] or #lines[r + 1] do
+      for byte = (r == c[1] and c[2] or 0) + 1, math.min(r == c[3] and c[4] or #lines[r + 1], #lines[r + 1]) do
         hls[r + 1][byte] = c.hl
       end
     end
@@ -260,8 +504,10 @@ end
 -- Highlight rows first..last of block `b` (see M.prepare) as in its file, into
 -- b.highlights[row]: from the syntax tree of its buffer while that is unchanged (read
 -- from a copy of its text, as the query's predicates go faster on a string), else from
--- a parse of the block with a margin of code around it (a block cut out alone could
--- leave a construct open, its keywords unparsed)
+-- a parse of the file read from disk: whole up to WHOLE_LINES lines, so a block inside an
+-- injected language (a .vue file's <script>, a fence) is read as that language; else of
+-- the block with a margin of code around it (a block cut out alone could leave a
+-- construct open, its keywords unparsed). A big file isn't parsed.
 function M.highlight(b, first, last)
   while first <= last and b.highlights[first] do
     first = first + 1
@@ -273,18 +519,27 @@ function M.highlight(b, first, last)
     return
   end
   local f, lines, chunks = b.file, vim.list_slice(b.lines, first - b.first + 1, last - b.first + 1), nil
-  if f.buf and vim.api.nvim_buf_is_loaded(f.buf) and vim.api.nvim_buf_get_changedtick(f.buf) == f.tick then
-    local ok, parser = pcall(vim.treesitter.get_parser, f.buf)
-    if ok and parser then
-      f.text = f.text or table.concat(vim.api.nvim_buf_get_lines(f.buf, 0, -1, false), '\n')
-      chunks = highlight_rows(parser, f.text, first - 1, lines)
+  if f.big then -- (left plain)
+  elseif f.buf then
+    if vim.api.nvim_buf_is_loaded(f.buf) and vim.api.nvim_buf_get_changedtick(f.buf) == f.tick then
+      local ok, parser = pcall(vim.treesitter.get_parser, f.buf)
+      if ok and parser then
+        f.text = f.text or table.concat(vim.api.nvim_buf_get_lines(f.buf, 0, -1, false), '\n')
+        chunks = highlight_rows(parser, f.text, first - 1, lines)
+      end
+    end
+  elseif #read(f.filename).lines <= WHOLE_LINES then
+    local p = file_parser(f.filename)
+    if p.parser then
+      chunks = highlight_rows(p.parser, p.text, first - 1, lines)
     end
   else
     if not b.snippet then
-      local from = f.lines and math.max(b.first - CONTEXT_MARGIN, 1) or b.first
-      local text = table.concat(f.lines and vim.list_slice(f.lines, from, b.last + CONTEXT_MARGIN) or b.lines, '\n')
+      local all = read(f.filename).lines
+      local from = math.max(b.first - CONTEXT_MARGIN, 1)
+      local text = table.concat(vim.list_slice(all, from, b.last + CONTEXT_MARGIN), '\n')
       local ok, parser = pcall(vim.treesitter.get_string_parser, text, f.lang)
-      b.snippet = { parser = ok and parser, text = text, from = from }
+      b.snippet = { parser = f.lang and ok and parser or nil, text = text, from = from }
     end
     if b.snippet.parser then
       chunks = highlight_rows(b.snippet.parser, b.snippet.text, first - b.snippet.from, lines)
@@ -295,15 +550,15 @@ function M.highlight(b, first, last)
   end
 end
 
--- The code of row `r` of block `b` as chunks { text, hl }, as the list shows it:
--- dedented with its block, tabs expanded, highlighted once M.highlight went through
+-- The code of row `r` of block `b` as chunks { text, hl }, as the list shows it: tabs
+-- expanded, dedented with its block, highlighted once M.highlight went through
 function M.chunks(b, r)
-  local chunks, pos = {}, 0
+  local text, chunks, pos = b.view[r - b.first + 1].text, {}, 0
   for _, c in ipairs(b.highlights[r] or { { b.lines[r - b.first + 1] or '' } }) do
-    local from = pos + 1
+    local from, to = shown_col(b, r, pos), shown_col(b, r, pos + #c[1])
     pos = pos + #c[1]
-    if pos > b.dedent then
-      chunks[#chunks + 1] = { (c[1]:sub(math.max(b.dedent - from + 2, 1)):gsub('\t', b.tab)), c[2] }
+    if to > from then
+      chunks[#chunks + 1] = { text:sub(b.dedent + from + 1, b.dedent + to), c[2] }
     end
   end
   return chunks
