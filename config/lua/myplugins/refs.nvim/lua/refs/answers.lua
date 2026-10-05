@@ -25,29 +25,36 @@ local MAX_WORDS = 500 -- a buffer's answers start afresh past this many words
 
 local uri_bufs = {} -- [uri] = buf
 
--- The buffer of `uri` (vim.uri_to_bufnr, which makes one for a file without), found once
+-- The buffer of `uri`, if there is one (none is made for a file: a list can name
+-- hundreds). That there's none is remembered until a buffer is made (M.buffer_added).
 function M.uri_buf(uri)
   local buf = uri_bufs[uri]
-  if not (buf and vim.api.nvim_buf_is_valid(buf)) then
-    buf = vim.uri_to_bufnr(uri)
-    uri_bufs[uri] = buf
+  if buf == false or (buf and vim.api.nvim_buf_is_valid(buf)) then
+    return buf or nil
   end
-  return buf
+  local fname = vim.uri_to_fname(uri)
+  buf = vim.fn.bufexists(fname) == 1 and vim.fn.bufnr(fname) or -1
+  uri_bufs[uri] = buf > 0 and buf
+  return uri_bufs[uri] or nil
+end
+
+-- A buffer was made: a file found without one may have it
+function M.buffer_added()
+  for uri, buf in pairs(uri_bufs) do
+    if buf == false then
+      uri_bufs[uri] = nil
+    end
+  end
 end
 
 -- The version of the text at `uri`: the file's modification time and size, or its
--- buffer's changedtick while that has changes not written (loading a file leaves it be).
--- (A buffer is looked for, not made.)
+-- buffer's changedtick while that has changes not written (loading a file leaves it be)
 local function version(uri)
-  local fname = vim.uri_to_fname(uri)
-  local buf = uri_bufs[uri]
-  if not (buf and vim.api.nvim_buf_is_valid(buf)) then
-    buf = vim.fn.bufexists(fname) == 1 and vim.fn.bufnr(fname) or -1
-  end
-  if buf > 0 and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
+  local buf = M.uri_buf(uri)
+  if buf and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
     return 'b' .. vim.api.nvim_buf_get_changedtick(buf)
   end
-  local stat = vim.uv.fs_stat(fname)
+  local stat = vim.uv.fs_stat(vim.uri_to_fname(uri))
   return stat and ('f%d.%d.%d'):format(stat.mtime.sec, stat.mtime.nsec, stat.size) or '-'
 end
 
