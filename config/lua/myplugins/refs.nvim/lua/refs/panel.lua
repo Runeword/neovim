@@ -151,26 +151,32 @@ function M.wiped(buf)
   end
 end
 
--- The item (see code.prepare) under the cursor of `win` (a window showing the list), or
--- the file's first under a file header
+-- The item (see code.prepare) under the cursor of `win` (a window showing the list): the
+-- one a context line goes with, the file's first under a file header
 local function selected(win)
   local row = list.rows[vim.api.nvim_win_get_cursor(win or list.win)[1]]
-  return row and (row.item or row.file[1])
+  return row and (row.item or row.owner or row.file[1])
 end
 
 -- The file's icon and its highlight group: mini.icons', else nvim-web-devicons'
 local icons = {} -- [file name] = { icon, hl }, or false without one
+local icon_of -- the icons' source: mini.icons, else nvim-web-devicons, else none (false)
 
 local function file_icon(filename)
   local name = vim.fs.basename(filename)
   if icons[name] == nil then
-    local ok, icon, hl = pcall(function()
-      return require('mini.icons').get('file', name)
-    end)
-    if not (ok and icon) then
-      ok, icon, hl = pcall(function()
-        return require('nvim-web-devicons').get_icon(name, vim.fn.fnamemodify(name, ':e'), { default = true })
-      end)
+    if icon_of == nil then
+      local ok, mini = pcall(require, 'mini.icons')
+      local devicons_ok, devicons = pcall(require, 'nvim-web-devicons')
+      icon_of = ok and function(n)
+        return mini.get('file', n)
+      end or devicons_ok and function(n)
+        return devicons.get_icon(n, vim.fn.fnamemodify(n, ':e'), { default = true })
+      end or false
+    end
+    local ok, icon, hl = false, nil, nil
+    if icon_of then
+      ok, icon, hl = pcall(icon_of, name)
     end
     icons[name] = ok and icon and { icon, hl } or false
   end
@@ -182,6 +188,8 @@ end
 -- The file as the list's headers and the pane's winbar name it, as { text, hl }
 -- segments: its icon, then its path. Given a `width` to fit in, the path loses leading
 -- directories as needed (a winbar would cut it anywhere, marking the cut with a '<').
+local paths = {} -- [cwd \0 filename] = its path as shown
+
 local function file_label(filename, width)
   local icon, icon_hl = file_icon(filename)
   local label = { { ' ' } }
@@ -189,7 +197,9 @@ local function file_label(filename, width)
     label[#label + 1] = { icon .. ' ', icon_hl }
   end
   label[#label + 1] = { ' ' }
-  local path = vim.fn.fnamemodify(filename, ':p:~:.')
+  local key = vim.uv.cwd() .. '\0' .. filename
+  paths[key] = paths[key] or vim.fn.fnamemodify(filename, ':p:~:.')
+  local path = paths[key]
   if width then
     local room = width
     for _, s in ipairs(label) do
@@ -210,7 +220,7 @@ end
 -- (see locations): the same in an ASCII line (once known to be, a minified file's line
 -- isn't counted through for each reference on it)
 local function byte_of(f, row, encoding, char)
-  local line = f.lines[row + 1]
+  local line = f.line(row + 1)
   if f.ascii[row] == nil then
     f.ascii[row] = not line:find('[\128-\255]')
   end
@@ -224,7 +234,8 @@ end
 -- code.prepare takes them: { filename, buf, pos, end_pos }, positions as { row, col },
 -- the row 1-based, the col a 0-indexed byte (servers count characters, in their own
 -- encoding). A location past the end of its file (from a server behind on edits) is
--- left out. The files not loaded are read into `read_files`, for code.prepare.
+-- left out. Its `buf` is the file's buffer, if it has one. The files not loaded are read
+-- into `read_files`, for code.prepare.
 local function locations(answer, read_files)
   local items, seen, files = {}, {}, {}
   read_files = read_files or {}
@@ -234,18 +245,25 @@ local function locations(answer, read_files)
       local f = files[uri]
       if not f then
         local buf, filename = answers.uri_buf(uri), vim.uri_to_fname(uri)
-        local lines
-        if vim.api.nvim_buf_is_loaded(buf) then
-          lines = code.lines(filename, buf)
+        local line
+        if buf and vim.api.nvim_buf_is_loaded(buf) then
+          local got = {}
+          line = function(n)
+            got[n] = got[n] or vim.api.nvim_buf_get_lines(buf, n - 1, n, false)[1] or false
+            return got[n] or nil
+          end
         else
           read_files[filename] = read_files[filename] or code.file(filename)
-          lines = read_files[filename].lines
+          local file = read_files[filename]
+          line = function(n)
+            return code.line(file, n)
+          end
         end
-        f = { buf = buf, filename = filename, lines = lines, ascii = {} }
+        f = { buf = buf, filename = filename, line = line, ascii = {} }
         files[uri] = f
       end
       local s, e = range.start, range['end']
-      if f.lines[s.line + 1] and f.lines[e.line + 1] then
+      if f.line(s.line + 1) and f.line(e.line + 1) then
         local encoding = r.client.offset_encoding
         local item = {
           filename = f.filename,
@@ -303,7 +321,8 @@ local function track(buf)
 end
 
 -- Mark the references of `files` (see code.prepare) in the code, in place of those
--- marked so far; none without `files`
+-- marked so far; none without `files`. A file without a buffer gets its references once
+-- it has one (see adopt).
 local function mark_code(files)
   local redraw = {} -- the buffers that had some, and those getting some
   for buf in pairs(list.code) do
@@ -312,11 +331,15 @@ local function mark_code(files)
       vim.api.nvim_buf_clear_namespace(buf, code_ns, 0, -1)
     end
   end
-  list.code = {}
+  list.code, list.bufless = {}, {}
   for _, f in ipairs(files or {}) do
-    redraw[f.buf] = true
-    -- (a file reached by two paths, as through a symlink, is one buffer)
-    list.code[f.buf] = vim.list_extend(list.code[f.buf] or {}, f.refs)
+    if f.buf then
+      redraw[f.buf] = true
+      -- (a file reached by two paths, as through a symlink, is one buffer)
+      list.code[f.buf] = vim.list_extend(list.code[f.buf] or {}, f.refs)
+    else
+      list.bufless[f.filename] = f
+    end
   end
   for buf in pairs(list.code) do
     track(buf)
@@ -324,10 +347,26 @@ local function mark_code(files)
   redraw_code(redraw)
 end
 
+-- A file of the list without a buffer (see locations) has one now, `buf`: its items and
+-- references go with it, as if it had had it all along
+local function adopt(buf)
+  local f = list.bufless and list.bufless[vim.api.nvim_buf_get_name(buf)]
+  if f then
+    list.bufless[f.filename], f.buf = nil, buf
+    for _, item in ipairs(f) do
+      item.buf = buf
+    end
+    for _, ref in ipairs(f.refs) do
+      ref.buf = buf
+    end
+    list.code[buf] = vim.list_extend(list.code[buf] or {}, f.refs)
+  end
+end
+
 -- Where reference `ref` (see code.prepare) is now, start and end: its extmark follows the
 -- edits of its buffer; nil once its text is gone
 local function ref_pos(ref)
-  if ref.mark and vim.api.nvim_buf_is_loaded(ref.buf) then
+  if ref.mark and ref.buf and vim.api.nvim_buf_is_loaded(ref.buf) then
     local m = vim.api.nvim_buf_get_extmark_by_id(ref.buf, code_ns, ref.mark, { details = true })
     if m[1] then
       if m[3].invalid then
@@ -342,8 +381,13 @@ end
 -- Highlight the references the list shows in `buf`, rows `toprow`..`botrow` (0-indexed)
 -- of it being drawn: RefsMatch (in the panel's tab page only)
 function M.mark(buf, toprow, botrow)
-  if not (list.code[buf] and M.is_open()) then
+  if not M.is_open() then
     return
+  elseif not list.code[buf] then
+    adopt(buf) -- (a file opened since the list showed it)
+    if not list.code[buf] then
+      return
+    end
   end
   track(buf) -- (loaded since the list showed them)
   local opts = { details = true, overlap = true }
@@ -634,22 +678,20 @@ end
 
 -------------------- List
 
--- A context line as virtual line chunks: its prefix, then its code (a gap between
--- blocks has no row: the guide and '...' alone)
-local function context_line(line)
-  local chunks = vim.list_slice(line.prefix)
-  return line.row and vim.list_extend(chunks, code.chunks(line.block, line.row)) or chunks
-end
+-- The list's buffer holds its text only, a list line per file header, item, context line
+-- and gap; what it looks like is drawn as it comes into view (M.highlight, M.draw_line):
+-- a list of thousands of references is drawn as fast as one of ten.
 
--- Draw `files` (see code.prepare): in the `order` of their names given, the others after
+-- Write `files` (see code.prepare): in the `order` of their names given, the others after
 -- by name; without one, the code buffer's file first. A header per file, then a line per
--- item, a line of code with each reference on it marked (RefsMatch). The context lines
--- go under these as virtual lines (so the cursor steps from item to item over them): the
--- lines above an item under the list line before it, those below it under its own. Each
--- gets the tree guide continued down, then blanks and its line number under the
--- reference's icon and line number columns. The code is highlighted once in view
--- (M.highlight).
-local function render(files, lnum_width, code_buf, order)
+-- item, a line of code with each reference on it marked (RefsMatch), between its context
+-- lines (j/k step from item to item over them), gaps marked '...' ending under the line
+-- numbers. A context line gets the tree guide continued down, then blanks and its line
+-- number under the reference's icon and line number columns. list.rows gets per line
+-- { file, header | item | owner (the item a context line or gap goes with), block and row
+-- (of a context line's code), hls ({ from, to, hl }), code_col (where its code starts) }.
+-- Returns the drawing: { lines, rows, order (of the files' names), files } (see write).
+local function build(files, lnum_width, code_buf, order)
   local rank = {}
   for i, filename in ipairs(order or {}) do
     rank[filename] = i
@@ -666,47 +708,48 @@ local function render(files, lnum_width, code_buf, order)
     end
     return a.filename < b.filename
   end)
-  list.order = {}
-  local lines, rows = {}, {}
-  -- A list line of { text, hl } segments, for `row`
-  local function add(segments, row)
-    local text, col = {}, 0
+  local names, lines, rows = {}, {}, {}
+  -- A list line of { text, hl } segments, for `row`; `code` given, it ends the line
+  local function add(segments, row, text)
+    local parts, col = {}, 0
     row.hls = {}
     for _, s in ipairs(segments) do
-      text[#text + 1] = s[1]
+      parts[#parts + 1] = s[1]
       if s[2] then
         row.hls[#row.hls + 1] = { col, col + #s[1], s[2] }
       end
       col = col + #s[1]
     end
-    lines[#lines + 1] = table.concat(text)
+    if text then
+      parts[#parts + 1], row.code_col = text, col
+    end
+    lines[#lines + 1] = table.concat(parts)
     rows[#lines] = row
   end
-  -- A context line under the last list line: `guide`, then row `r` of `block`; with no
-  -- row, a gap (lines left out), marked '...' ending under the line numbers
-  local function context(guide, block, r)
+  -- A context line, row `r` of `block` after `guide`, going with `owner`; with no row, a
+  -- gap (lines left out)
+  local function context(f, owner, guide, block, r)
     local prefix = { { ' ' }, { guide, 'LineNr' } }
     if r then
       prefix[3] = { ('  %' .. lnum_width .. 'd '):format(r), 'NonText' }
+      add(prefix, { file = f, owner = owner, block = block, row = r }, code.text(block, r))
     else
       prefix[3] = { ('%' .. (lnum_width + 2) .. 's'):format('...'), 'NonText' }
+      add(prefix, { file = f, owner = owner })
     end
-    local row = rows[#lines]
-    row.lines = row.lines or {}
-    row.lines[#row.lines + 1] = { prefix = prefix, block = block, row = r }
   end
   for _, f in ipairs(files) do
-    list.order[#list.order + 1] = f.filename
+    names[#names + 1] = f.filename
     local header = file_label(f.filename)
     vim.list_extend(header, { { ' ' }, { (' %d '):format(#f.refs), 'TabLineSel' } })
-    add(header, { file = f })
+    add(header, { file = f, header = true })
     for i, item in ipairs(f) do
       local more = i < #f -- (the tree's guide goes on down)
       if item.gap then
-        context('│ ')
+        context(f, item, '│ ')
       end
       for r = item.above[1], item.above[2] do
-        context('│ ', item.block, r)
+        context(f, item, '│ ', item.block, r)
       end
       add({
         { ' ' },
@@ -714,92 +757,106 @@ local function render(files, lnum_width, code_buf, order)
         KIND_ICONS[item.ref_kind] or { '  ' },
         { ('%' .. lnum_width .. 'd'):format(item.pos[1]), 'LineNr' },
         { ' ' },
-        { item.code }, -- (last: see M.highlight)
-      }, { file = f, item = item })
+      }, { file = f, item = item, block = item.block, row = item.pos[1] }, item.code)
       for r = item.below[1], item.below[2] do
-        context(more and '│ ' or '  ', item.block, r)
+        context(f, item, more and '│ ' or '  ', item.block, r)
       end
     end
   end
 
+  return { lines = lines, rows = rows, order = names, files = files }
+end
+
+-- Write `drawing` (see build) into the list
+local function write(drawing)
   local buf = list.buf
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   vim.api.nvim_buf_clear_namespace(buf, current_ns, 0, -1)
   vim.bo[buf].modifiable = true
-  local ok, err = pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, lines)
+  local ok, err = pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, drawing.lines)
   vim.bo[buf].modifiable = false
   if not ok then
     error(err)
   end
-  for i, row in ipairs(rows) do
-    for _, hl in ipairs(row.hls) do
-      vim.api.nvim_buf_set_extmark(buf, ns, i - 1, hl[1], { end_col = hl[2], hl_group = hl[3] })
-    end
-    if row.item then -- (its code ends the line; the marks go over the code's highlighting)
-      local col = #lines[i] - #row.item.code
-      for _, ref in ipairs(row.item.refs) do
-        local opts = { end_col = col + ref.match[2], hl_group = 'RefsMatch', priority = 4097 }
-        vim.api.nvim_buf_set_extmark(buf, ns, i - 1, col + ref.match[1], opts)
-      end
-    end
-    if row.lines then
-      local opts = { virt_lines = vim.tbl_map(context_line, row.lines), virt_lines_overflow = 'scroll' }
-      row.id = vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 0, opts)
-    end
-  end
-  list.rows = rows
+  list.rows, list.order = drawing.rows, drawing.order
 end
 
--- Highlight the code in view not highlighted yet, the references' and their context's,
--- in the list's window from line `toprow` (0-indexed) down, as far as its height goes
--- (the decoration provider's botrow can be stale, and counts the buffer's lines only)
+-- The last drawings (see build), by answer and order: going back to a symbol shown a
+-- moment ago draws it at once
+local drawings, drawn = {}, 0
+local KEPT_DRAWINGS, KEPT_LINES = 4, 60000
+
+local function keep(key, drawing)
+  drawn = drawn + 1
+  drawing.used, drawings[key] = drawn, drawing
+  while true do
+    local count, lines, oldest = 0, 0, nil
+    for k, d in pairs(drawings) do
+      count, lines = count + 1, lines + #d.lines
+      if not oldest or d.used < drawings[oldest].used then
+        oldest = k
+      end
+    end
+    if count <= 1 or (count <= KEPT_DRAWINGS and lines <= KEPT_LINES) then
+      return
+    end
+    drawings[oldest] = nil
+  end
+end
+
+-- The list's window `win` about to be drawn from line `toprow` (0-indexed): highlight the
+-- code of the lines in view not highlighted yet, a block's rows at once (each parse goes
+-- for a span of rows). Whether it's the list's (its lines are then drawn, M.draw_line).
 function M.highlight(win, toprow)
   if win ~= list.win then
+    return false
+  end
+  local spans = {} -- [block] = the rows of it to highlight
+  local last = math.min(toprow + vim.api.nvim_win_get_height(win) + 1, #list.rows)
+  for i = toprow + 1, last do
+    local row = list.rows[i]
+    if row.row and not row.block.highlights[row.row] then
+      local span = spans[row.block] or { row.row, row.row }
+      spans[row.block] = { math.min(span[1], row.row), math.max(span[2], row.row) }
+    end
+  end
+  for b, span in pairs(spans) do
+    code.highlight(b, span[1], span[2])
+  end
+  return true
+end
+
+-- Draw line `line` (0-indexed) of the list, in view: its header's, guides', icon's and
+-- line numbers' highlights, its code's, and the references on an item's line (RefsMatch,
+-- over the code's)
+function M.draw_line(buf, line)
+  local row = list.rows[line + 1]
+  if buf ~= list.buf or not row then
     return
   end
-  local room = vim.api.nvim_win_get_height(win)
-  -- (from the line above the top one: the lines under it can show at the top too)
-  for i = math.max(toprow, 1), #list.rows do
-    local row = list.rows[i]
-    if row and not row.done then
-      row.done = true
-      local spans = {} -- [block] = the rows of it to highlight
-      local function need(b, r)
-        local span = spans[b] or { r, r }
-        spans[b] = { math.min(span[1], r), math.max(span[2], r) }
+  local function mark(from, to, hl, priority)
+    vim.api.nvim_buf_set_extmark(
+      buf,
+      ns,
+      line,
+      from,
+      { end_col = to, hl_group = hl, priority = priority, ephemeral = true }
+    )
+  end
+  for _, hl in ipairs(row.hls) do
+    mark(hl[1], hl[2], hl[3])
+  end
+  if row.row then
+    local col = row.code_col
+    for _, c in ipairs(code.chunks(row.block, row.row)) do
+      if c[2] then
+        mark(col, col + #c[1], c[2])
       end
-      if row.item then
-        need(row.item.block, row.item.pos[1])
-      end
-      for _, line in ipairs(row.lines or {}) do
-        if line.row then
-          need(line.block, line.row)
-        end
-      end
-      for b, span in pairs(spans) do
-        code.highlight(b, span[1], span[2])
-      end
-      if row.item then -- its code ends the line (see render)
-        local text = vim.api.nvim_buf_get_lines(list.buf, i - 1, i, false)[1] or ''
-        local col = #text - #row.item.code
-        for _, c in ipairs(code.chunks(row.item.block, row.item.pos[1])) do
-          if c[2] then
-            vim.api.nvim_buf_set_extmark(list.buf, ns, i - 1, col, { end_col = col + #c[1], hl_group = c[2] })
-          end
-          col = col + #c[1]
-        end
-      end
-      if row.lines then
-        local opts = { id = row.id, virt_lines = vim.tbl_map(context_line, row.lines), virt_lines_overflow = 'scroll' }
-        vim.api.nvim_buf_set_extmark(list.buf, ns, i - 1, 0, opts)
-      end
+      col = col + #c[1]
     end
-    if i > toprow then
-      room = room - 1 - (row and row.lines and #row.lines or 0)
-      if room <= 0 then
-        return
-      end
-    end
+  end
+  for _, ref in ipairs(row.item and row.item.refs or {}) do
+    mark(row.code_col + ref.match[1], row.code_col + ref.match[2], 'RefsMatch', 4097)
   end
 end
 
@@ -825,7 +882,7 @@ local function find(buf, pos)
     local k = row.item and ref_at(row.item, buf, pos)
     if k then
       return i, k
-    elseif not row.item and row.file.buf == buf then
+    elseif row.header and row.file.buf == buf then
       header = header or i
     end
   end
@@ -838,11 +895,29 @@ local function mark_current(row, k)
   vim.api.nvim_buf_clear_namespace(list.buf, current_ns, 0, -1)
   local item = row and list.rows[row].item
   if item then
-    local text = vim.api.nvim_buf_get_lines(list.buf, row - 1, row, false)[1] or ''
-    local col, match = #text - #item.code, item.refs[k].match -- (its code ends the line, see render)
+    local col, match = list.rows[row].code_col, item.refs[k].match
     local opts = { end_col = col + match[2], hl_group = 'RefsCurrent', priority = 4098 }
     vim.api.nvim_buf_set_extmark(list.buf, current_ns, row - 1, col + match[1], opts)
   end
+end
+
+-- Put the list's cursor on line `row`, scrolled so that 'scrolloff' holds there: the
+-- list's window entered later (gf, <C-w>l) keeps it there, where with 'splitkeep' set
+-- Neovim would move it to make 'scrolloff' hold (onto a context line)
+local function place(row)
+  local win = list.win
+  local height = vim.api.nvim_win_get_height(win)
+  local so = vim.wo[win].scrolloff
+  so = math.min(so >= 0 and so or vim.o.scrolloff, math.floor((height - 1) / 2))
+  vim.api.nvim_win_call(win, function()
+    local top = vim.fn.winsaveview().topline
+    if row - so < top then
+      top = math.max(row - so, 1)
+    elseif row + so > top + height - 1 then
+      top = row + so - height + 1
+    end
+    vim.fn.winrestview({ lnum = row, col = 0, topline = top })
+  end)
 end
 
 -- Mark the reference at `pos` in `code_buf` as the current one, and put the list's
@@ -858,13 +933,18 @@ local function follow(code_buf, pos)
     mark_current()
   end
   if vim.api.nvim_get_current_win() ~= list.win then
-    vim.api.nvim_win_set_cursor(list.win, { row or header or 1, 0 })
+    place(row or header or 1)
   end
 end
 
 -- Whether position `p` ({ row, col }) comes before `q`
 local function before(p, q)
   return p[1] < q[1] or (p[1] == q[1] and p[2] < q[2])
+end
+
+-- Whether locations `a` and `b` (see locations) are in the same file
+local function same_file(a, b)
+  return (a.buf ~= nil and a.buf == b.buf) or a.filename == b.filename
 end
 
 -- Set `def` on the references (see locations) that are definitions. What the servers
@@ -879,7 +959,7 @@ local function mark_definitions(refs, defs)
   for _, def in ipairs(defs) do
     local first
     for _, ref in ipairs(refs) do
-      local overlap = ref.buf == def.buf and not before(def.end_pos, ref.pos) and not before(ref.end_pos, def.pos)
+      local overlap = same_file(ref, def) and not before(def.end_pos, ref.pos) and not before(ref.end_pos, def.pos)
       if overlap and not (first and before(first.pos, ref.pos)) then
         first = ref
       end
@@ -897,7 +977,7 @@ local function mark_definitions(refs, defs)
   end
   local first
   for _, ref in ipairs(refs) do
-    if ref.buf == found[1].buf and not (first and before(first.pos, ref.pos)) and code.assignment(ref) then
+    if same_file(ref, found[1]) and not (first and before(first.pos, ref.pos)) and code.assignment(ref) then
       first = ref
     end
   end
@@ -937,23 +1017,28 @@ function M.show(code_buf, pos, refs, now, given_defs)
   list.waiting = nil
   local sig = answers.sig(refs) .. ':' .. answers.sig(defs)
   if sig ~= list.sig then
-    local read_files = {} -- (each file read once, see code.prepare)
-    local items = locations(refs, read_files)
-    mark_definitions(items, locations(defs, read_files))
     local same = list.sig ~= nil and find(code_buf, pos) ~= nil -- (the cursor on a reference the list shows)
-    local files, lnum_width = code.prepare(items, read_files)
+    local order = same and list.order or nil
+    local drawn_key = sig .. '\0' .. (order and table.concat(order, '\0') or vim.api.nvim_buf_get_name(code_buf))
+    local drawing = drawings[drawn_key]
+    if drawing then
+      drawn = drawn + 1
+      drawing.used = drawn
+    else
+      local read_files = {} -- (each file read once, see code.prepare)
+      local items = locations(refs, read_files)
+      mark_definitions(items, locations(defs, read_files))
+      local files, lnum_width = code.prepare(items, read_files)
+      drawing = build(files, lnum_width, code_buf, order)
+      keep(drawn_key, drawing)
+    end
     local view = vim.api.nvim_win_call(list.win, vim.fn.winsaveview)
-    render(files, lnum_width, code_buf, same and list.order or nil)
-    -- The view keeps the context lines the old list showed above its top line (topfill):
-    -- no more than the new list has there, or Neovim draws the rest as a diff's deleted
-    -- lines ('-'s), and in an empty list never takes them away
-    local above = list.rows[math.min(view.topline, #list.rows) - 1] -- (its context lines go there)
-    view.topfill = math.min(view.topfill, above and above.lines and #above.lines or 0)
+    write(drawing)
     vim.api.nvim_win_call(list.win, function()
       vim.fn.winrestview(view)
     end)
     list.sig, list.gen = sig, (list.gen or 0) + 1
-    mark_code(files)
+    mark_code(drawing.files)
     vim.wo[list.win].cursorline = #list.rows > 0 -- (an empty list still has a line to highlight)
   end
   follow(code_buf, pos)
@@ -986,6 +1071,7 @@ function M.refresh(after)
     return after and after()
   end
   local asked = list.asked
+  list.asking = key -- (see M.go)
   answers.cancel('refresh', word_key(buf, pos))
   answers.ask(buf, pos, 'refs', function(refs)
     -- (still the latest question, its window showing the buffer, entered the list since
@@ -993,6 +1079,7 @@ function M.refresh(after)
     if asked ~= list.asked or not valid(win) or vim.api.nvim_win_get_buf(win) ~= buf then
       return
     end
+    list.asking = nil
     local now = vim.api.nvim_win_get_cursor(win)
     now = { now[1] - 1, now[2] }
     if key_of(buf, now) ~= key then
@@ -1037,6 +1124,12 @@ function M.focus()
     end
     follow(buf, pos)
     vim.api.nvim_set_current_win(list.win)
+    -- (on its line again once in the window: entering it can move the cursor to make
+    -- 'scrolloff' hold, as in a window too short for it)
+    local row = find(buf, pos)
+    if row then
+      vim.api.nvim_win_set_cursor(list.win, { row, 0 })
+    end
   end, 'focus')
 end
 
@@ -1062,6 +1155,9 @@ local function open(target, win, keep_view)
   end
   vim.fn.bufload(buf)
   vim.bo[buf].buflisted = true
+  if not list.code[buf] then
+    adopt(buf)
+  end
   track(buf)
   local pos = ref_pos(target) or target.pos
   local in_view = keep_view
@@ -1115,10 +1211,16 @@ end
 -- a code window: the arrows then do what they do without it.
 function M.go(dir)
   local win = vim.api.nvim_get_current_win()
-  if not (M.is_open() and code_window(win) and item_row(0, 1)) then
+  if not (M.is_open() and code_window(win)) then
     return false
   end
   local buf, cursor = vim.api.nvim_win_get_buf(win), vim.api.nvim_win_get_cursor(win)
+  if not item_row(0, 1) then
+    -- (empty while the references of the word under the cursor are on their way: wait
+    -- for them, as the panel just opened)
+    local key = key_of(buf, { cursor[1] - 1, cursor[2] })
+    return list.asking == key or list.waiting == key
+  end
   local row = vim.api.nvim_win_get_cursor(list.win)[1]
   local item = list.rows[row] and list.rows[row].item
   -- (from the reference under the cursor, when the list's item holds it)
@@ -1145,7 +1247,7 @@ function M.go(dir)
     end
   end
   if target then
-    vim.api.nvim_win_set_cursor(list.win, { target_row, 0 })
+    place(target_row)
     mark_current(target_row, target_k)
     open(target, win, true)
     M.definition()
