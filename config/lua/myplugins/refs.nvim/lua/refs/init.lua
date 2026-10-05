@@ -59,6 +59,7 @@ function M.setup()
     answers.forget(args.buf)
     panel.wiped(args.buf)
   end)
+  on('BufAdd', answers.buffer_added)
 
   -- The servers of a buffer changing, or one done loading the project (see
   -- answers.warm_up), its answers are to be asked again. (The panel opens at start,
@@ -107,13 +108,17 @@ function M.setup()
     panel.session(false)
   end)
 
-  -- Highlight the code of the list as it comes into view, and the references it shows in
-  -- the code
+  -- Draw the list's lines as they come into view, and the references it shows in the code
   vim.api.nvim_set_decoration_provider(vim.api.nvim_create_namespace('refs'), {
     on_win = function(_, win, buf, toprow, botrow)
-      panel.highlight(win, toprow)
+      if panel.highlight(win, toprow) then
+        return true -- (its lines are drawn one by one)
+      end
       panel.mark(buf, toprow, botrow)
       return false
+    end,
+    on_line = function(_, _, buf, line)
+      panel.draw_line(buf, line)
     end,
   })
 end
