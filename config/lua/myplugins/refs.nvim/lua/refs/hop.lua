@@ -250,15 +250,37 @@ function M.prefetch_here()
   ask_ahead(buf, targets)
 end
 
+local LONG_LIST = 300 -- references from which a landing's list is drawn after the press
+
 -- Land on `pos`, whose references are `refs`: the cursor there, the panel (opened if
--- needed) showing them and the pane its definition, the next landings asked about
+-- needed) showing them and the pane its definition, the next landings asked about. The
+-- panel follows in the same screen update, but for a long list, drawn right after it (if
+-- the cursor is still there): the cursor never waits on a list of thousands.
 local function land(job, pos, refs)
   vim.api.nvim_win_set_cursor(job.win, { pos[1] + 1, pos[2] })
   job.at, job.landed = pos, true
   job.steps = job.steps - 1
   panel.open()
-  panel.show(job.buf, pos, refs, true)
-  panel.definition()
+  local function show()
+    panel.show(job.buf, pos, refs, true)
+    panel.definition()
+  end
+  local count = 0
+  for _, r in ipairs(refs) do
+    count = count + #r.result
+  end
+  if count < LONG_LIST then
+    show()
+  else
+    vim.schedule(function()
+      if vim.api.nvim_get_current_win() == job.win and vim.api.nvim_win_get_buf(job.win) == job.buf then
+        local cursor = vim.api.nvim_win_get_cursor(job.win)
+        if cursor[1] - 1 == pos[1] and cursor[2] == pos[2] then
+          show()
+        end
+      end
+    end)
+  end
   ask_ahead(job.buf, ahead(job.buf, job.parser, pos, job.dir, HOP_AHEAD))
 end
 
@@ -272,7 +294,8 @@ local stalled = 0 -- when a wait for the server last ran out (see wait_for)
 
 -- The references of `pos` from the server, waiting for them: nil if it gave none in time
 -- (and at once while it was just found silent, so a macro's hops don't wait in turn).
--- <C-c> aborts, the keys waiting with it (the macro's rest).
+-- <C-c> stops it, and the keys waiting to run after it (the macro's rest), as it stops a
+-- macro anywhere: they're read out of the typeahead, unrun.
 local function wait_for(buf, pos)
   if vim.uv.now() - stalled < HOP_STALE_MS then
     return nil
@@ -285,7 +308,10 @@ local function wait_for(buf, pos)
     return got
   end, 5)
   if why == -2 then
-    error('Keyboard interrupt', 0)
+    while vim.fn.getchar(1) ~= 0 do
+      vim.fn.getchar()
+    end
+    return nil
   elseif not got then
     stalled = vim.uv.now()
   end
