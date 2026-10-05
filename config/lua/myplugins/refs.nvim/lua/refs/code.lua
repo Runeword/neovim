@@ -46,9 +46,13 @@ local function disk_version(filename)
   return ('f%d.%d.%d'):format(stat.mtime.sec, stat.mtime.nsec, stat.size), stat.size
 end
 
-local files = {} -- [filename] = { version, lines, bytes, used, ft }
+-- [filename] = { version, text, bytes, used, ft, starts (see index), all (see M.all) }:
+-- a file's text is kept whole, and only the lines asked for are cut out of it (the list
+-- needs a few lines of each of hundreds of files)
+local files = {}
 
--- `filename` as read from disk ({ version, lines, bytes }), kept while unchanged there
+-- `filename` as read from disk ({ version, text, bytes }, see M.line), kept while
+-- unchanged there
 local function read(filename)
   local version, size = disk_version(filename)
   uses = uses + 1
@@ -57,24 +61,73 @@ local function read(filename)
     f.used = uses
     return f
   end
-  local lines = {}
-  if size <= MAX_READ then
-    local ok, read_lines = pcall(vim.fn.readfile, filename)
-    if ok then
-      lines = read_lines
-      for i, line in ipairs(lines) do
-        if line:find('\n', 1, true) then
-          lines[i] = line:gsub('\n', '\0') -- (readfile gives a NUL as a NL)
-        end
-      end
+  local text = ''
+  local fd = size <= MAX_READ and io.open(filename, 'rb')
+  if fd then
+    text = fd:read('*a') or ''
+    fd:close()
+    if text:sub(1, 3) == '\239\187\191' then
+      text = text:sub(4) -- (a UTF-8 byte order mark, which a buffer doesn't show either)
     end
   end
-  f = { version = version, lines = lines, bytes = size, used = uses }
+  f = { version = version, text = text, bytes = size, used = uses }
   files[filename] = f
   if size > 0 then
     trim(files, math.huge, KEPT_BYTES)
   end
   return f
+end
+
+-- Where each line of `f` (see read) starts in its text
+local function index(f)
+  if not f.starts then
+    local starts, text, pos = { 1 }, f.text, 1
+    while true do
+      local nl = text:find('\n', pos, true)
+      if not nl then
+        break
+      end
+      pos = nl + 1
+      starts[#starts + 1] = pos
+    end
+    if starts[#starts] > #text then
+      starts[#starts] = nil -- (a newline ends the last line)
+    end
+    f.starts = starts
+  end
+  return f.starts
+end
+
+-- How many lines `f` has (see read)
+function M.count(f)
+  return #index(f)
+end
+
+-- Line `n` (1-based) of `f` (see read), without its line break (\r\n too); nil past the end
+function M.line(f, n)
+  local starts, text = index(f), f.text
+  local from = starts[n]
+  if not from then
+    return nil
+  end
+  local to = starts[n + 1] and starts[n + 1] - 2 or (text:byte(-1) == 10 and #text - 1 or #text)
+  local line = text:sub(from, to)
+  return line:byte(-1) == 13 and line:sub(1, -2) or line
+end
+
+-- Lines `first`..`last` of `f` (see read)
+function M.slice(f, first, last)
+  local lines = {}
+  for n = math.max(first, 1), math.min(last, M.count(f)) do
+    lines[#lines + 1] = M.line(f, n)
+  end
+  return lines
+end
+
+-- Every line of `f` (see read), cut once (the table is shared: not to be changed)
+function M.all(f)
+  f.all = f.all or M.slice(f, 1, M.count(f))
+  return f.all
 end
 
 -- The lines of `filename`: its buffer's when loaded, else read from disk (the table is
@@ -83,7 +136,7 @@ function M.lines(filename, buf)
   if buf and vim.api.nvim_buf_is_loaded(buf) then
     return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   end
-  return read(filename).lines
+  return M.all(read(filename))
 end
 
 -- The version of `filename`'s text: its buffer's changedtick while that has changes not
@@ -95,7 +148,7 @@ function M.version(filename, buf)
   return (disk_version(filename))
 end
 
--- `filename` as read from disk: { version, lines (shared: not to be changed), bytes }
+-- `filename` as read from disk: { version, text, bytes } (see M.line)
 M.file = read
 
 -- Whether `filename` is too big to parse: the config's b:big_file says so of a loaded
@@ -111,15 +164,22 @@ function M.big(filename, buf, f)
     bytes = vim.api.nvim_buf_get_offset(buf, count)
   else
     f = f or read(filename)
-    bytes, count = f.bytes, #f.lines
+    if f.bytes > BIG_BYTES then
+      return true
+    end
+    bytes, count = f.bytes, M.count(f)
   end
   return bytes > BIG_BYTES or (count > 0 and bytes / count > BIG_LINE)
 end
 
--- The treesitter language of `filename`, read from disk as `f` (see read)
+-- The treesitter language of `filename`, read from disk as `f` (see read): from its name,
+-- else its first lines (a shebang)
 local function lang_of(filename, f)
   if f.ft == nil then
-    local ok, ft = pcall(vim.filetype.match, { filename = filename, contents = f.lines })
+    local ok, ft = pcall(vim.filetype.match, { filename = filename })
+    if not (ok and ft) then
+      ok, ft = pcall(vim.filetype.match, { filename = filename, contents = M.slice(f, 1, 20) })
+    end
     f.ft = ok and ft or false
   end
   return f.ft and f.ft ~= '' and vim.treesitter.language.get_lang(f.ft) or nil
@@ -137,7 +197,7 @@ local function file_parser(filename)
     p.used = uses
     return p
   end
-  local lang, text = lang_of(filename, f), table.concat(f.lines, '\n')
+  local lang, text = lang_of(filename, f), f.text
   local ok, parser = pcall(vim.treesitter.get_string_parser, text, lang)
   p = { version = f.version, parser = lang and ok and parser or nil, text = text, used = uses }
   parsers[filename] = p
@@ -295,7 +355,7 @@ function M.assignment(ref)
     local f = read(ref.filename)
     local lang = lang_of(ref.filename, f)
     from = math.max(row - WINDOW, 0)
-    local text = table.concat(vim.list_slice(f.lines, from + 1, row + WINDOW + 1), '\n')
+    local text = table.concat(M.slice(f, from + 1, row + WINDOW + 1), '\n')
     local ok, p = pcall(vim.treesitter.get_string_parser, text, lang)
     parser = lang and ok and p or nil
   else
@@ -364,7 +424,7 @@ function M.prepare(refs, read_files)
     -- it ends), so cross-file refs work too
     local loaded = f.buf and vim.api.nvim_buf_is_loaded(f.buf)
     local disk = not loaded and (read_files and read_files[f.filename] or read(f.filename)) or nil
-    local count = loaded and vim.api.nvim_buf_line_count(f.buf) or #disk.lines
+    local count = loaded and vim.api.nvim_buf_line_count(f.buf) or M.count(disk)
     local ts = loaded and vim.bo[f.buf].tabstop or vim.o.tabstop
     local lang
     if loaded then
@@ -411,7 +471,7 @@ function M.prepare(refs, read_files)
 
     for _, b in ipairs(blocks) do
       b.lines = loaded and vim.api.nvim_buf_get_lines(f.buf, b.first - 1, b.last, false)
-        or vim.list_slice(disk.lines, b.first, b.last)
+        or M.slice(disk, b.first, b.last)
       b.view, b.dedent = {}, math.huge -- (dedent: the indentation its lines share, blank lines aside)
       for i, line in ipairs(b.lines) do
         b.lines[i] = cap(line)
@@ -520,24 +580,23 @@ function M.highlight(b, first, last)
   end
   local f, lines, chunks = b.file, vim.list_slice(b.lines, first - b.first + 1, last - b.first + 1), nil
   if f.big then -- (left plain)
-  elseif f.buf then
-    if vim.api.nvim_buf_is_loaded(f.buf) and vim.api.nvim_buf_get_changedtick(f.buf) == f.tick then
-      local ok, parser = pcall(vim.treesitter.get_parser, f.buf)
-      if ok and parser then
-        f.text = f.text or table.concat(vim.api.nvim_buf_get_lines(f.buf, 0, -1, false), '\n')
-        chunks = highlight_rows(parser, f.text, first - 1, lines)
-      end
+  elseif f.buf and vim.api.nvim_buf_is_loaded(f.buf) and vim.api.nvim_buf_get_changedtick(f.buf) == f.tick then
+    local ok, parser = pcall(vim.treesitter.get_parser, f.buf)
+    if ok and parser then
+      f.text = f.text or table.concat(vim.api.nvim_buf_get_lines(f.buf, 0, -1, false), '\n')
+      chunks = highlight_rows(parser, f.text, first - 1, lines)
     end
-  elseif #read(f.filename).lines <= WHOLE_LINES then
+  -- (else as on disk: a buffer changed since, back to its file's text, as by an undo; a
+  -- different text is another answer, drawn anew)
+  elseif M.count(read(f.filename)) <= WHOLE_LINES then
     local p = file_parser(f.filename)
     if p.parser then
       chunks = highlight_rows(p.parser, p.text, first - 1, lines)
     end
   else
     if not b.snippet then
-      local all = read(f.filename).lines
       local from = math.max(b.first - CONTEXT_MARGIN, 1)
-      local text = table.concat(vim.list_slice(all, from, b.last + CONTEXT_MARGIN), '\n')
+      local text = table.concat(M.slice(read(f.filename), from, b.last + CONTEXT_MARGIN), '\n')
       local ok, parser = pcall(vim.treesitter.get_string_parser, text, f.lang)
       b.snippet = { parser = f.lang and ok and parser or nil, text = text, from = from }
     end
@@ -548,6 +607,12 @@ function M.highlight(b, first, last)
   for row = first, last do
     b.highlights[row] = chunks and chunks[row - first + 1] or { { lines[row - first + 1] or '' } }
   end
+end
+
+-- The code of row `r` of block `b` as the list shows it: tabs expanded, dedented with its
+-- block
+function M.text(b, r)
+  return b.view[r - b.first + 1].text:sub(b.dedent + 1)
 end
 
 -- The code of row `r` of block `b` as chunks { text, hl }, as the list shows it: tabs
