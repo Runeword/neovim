@@ -114,18 +114,21 @@ end
 -- Namespace holding the hide-comments conceal extmarks (populated by M.toggleComments,
 -- far below). Declared up here because the movement flow that follows consults it: a
 -- FULLY hidden comment line carries a `conceal_lines` extmark in this namespace, and
--- such lines are dropped from the flow -- j/k and the smart jump skip them, so
--- navigation never lands on (and thereby pops back open) a hidden comment.
+-- such lines are dropped from the flow -- j/k and the smart jump skip them, so they
+-- never land on a hidden comment (any other motion that does is undone by the guard in
+-- the Comments section).
 local comment_ns = vim.api.nvim_create_namespace('hide_comments')
 
 -- True when line `lnum` (1-indexed) is a fully-hidden comment line: comments are
--- toggled off in this buffer AND the line carries a conceal_lines extmark. A no-op
--- (single buffer-var read) whenever the toggle is off, so the movement flow pays
--- nothing in the common case. Inline/trailing comments keep their code line and so
--- are NOT hidden lines -- only whole-line conceals count.
+-- toggled off in this buffer, this window draws them hidden (conceal_lines needs
+-- conceallevel >= 2 -- another window onto the buffer may show them) AND the line
+-- carries a conceal_lines extmark. A no-op (single buffer-var read) whenever the
+-- toggle is off, so the movement flow pays nothing in the common case. Inline/trailing
+-- comments keep their code line and so are NOT hidden lines -- only whole-line
+-- conceals count.
 local function is_hidden_comment_line(lnum)
   local buf = vim.api.nvim_get_current_buf()
-  if not vim.b[buf].comments_hidden then
+  if not vim.b[buf].comments_hidden or vim.wo.conceallevel < 2 then
     return false
   end
   local marks = vim.api.nvim_buf_get_extmarks(buf, comment_ns, { lnum - 1, 0 }, { lnum - 1, -1 }, { details = true })
@@ -568,23 +571,54 @@ end
 -------------------- Comments
 
 -- Toggle hiding every comment in the current buffer (per-buffer, so it's "in a
--- file"). Treesitter finds each @comment capture across the main tree and every
--- injected language; each is concealed by kind: a line that is nothing but a comment
--- collapses away entirely (conceal_lines), a comment sharing its line with code has
--- just its text concealed (and the whitespace gap before a trailing comment swallowed,
--- so no dangling run is left). conceal only renders at conceallevel > 0, so we raise it
--- while hidden and restore the prior value on toggle-off. The cursor's own line is
--- always revealed (built-in conceal behaviour) -- navigate onto a hidden comment to
--- read or edit it. State is a buffer var + a private namespace; edits made while
--- hidden aren't re-scanned until the next toggle. (comment_ns -- the namespace these
--- conceal extmarks live in -- is declared up by the Move section, which reads it to
--- keep hidden comment lines out of the j/k movement flow.)
+-- file"). Treesitter finds each comment node across the main tree and every injected
+-- language; each is concealed by kind: a line that is nothing but a comment collapses
+-- away entirely (conceal_lines), a comment sharing its line with code has just its
+-- text concealed (and the whitespace gap before a trailing comment swallowed, so no
+-- dangling run is left). conceal_lines only renders at conceallevel >= 2, so we raise
+-- it in every window showing the buffer while hidden and restore the prior value on
+-- toggle-off. Hidden comments are out of reach, not just out of sight: 'concealcursor'
+-- keeps them hidden on the cursor line too, and a guard keeps the cursor out of them,
+-- so nothing can act on them unseen; `$` as a motion, D and C stop at the end of the
+-- visible text. Commands on whole lines (dd, cc, J, a linewise range) still take the
+-- comments on those lines. State is a buffer var + a private namespace, whose marks are
+-- rebuilt after every edit while hidden (see M.toggleComments). (comment_ns -- the
+-- namespace these conceal extmarks live in -- is declared up by the Move section,
+-- which reads it to keep hidden comment lines out of the j/k movement flow.)
 
--- Every comment node range in `buf` as { srow, scol, erow, ecol } (0-indexed, ecol
--- exclusive). Walks the main parser and every injected child tree, matching the
--- @comment / @comment.* highlight captures -- portable across languages, where the
--- node type itself is line_comment / block_comment / ... per grammar. {} if the
--- buffer has no treesitter parser.
+-- Comment node types whose name doesn't say so (most grammars' do: comment,
+-- line_comment, block_comment, html_comment, ...): SQL's /* */ and Haskell's -- |.
+local OTHER_COMMENT_TYPES = { marginalia = true, haddock = true }
+
+-- Per language, { query = a query capturing every comment node type of its grammar,
+-- types = those types as a set }, or false if it has none; built on first use. Matching
+-- node types rather than the highlights query's @comment captures is an order of
+-- magnitude faster -- the scan reruns after every edit -- and stricter: highlights also
+-- style some non-comments as comments (Elixir's _unused variables, "Note:" in help
+-- files), which would be hidden with them.
+local comment_langs = {}
+local function comment_lang(lang)
+  if comment_langs[lang] == nil then
+    local types, patterns = {}, {}
+    for name, named in pairs(vim.treesitter.language.inspect(lang).symbols) do
+      if named and (name:lower():find('comment', 1, true) or OTHER_COMMENT_TYPES[name]) then
+        types[name] = true
+        patterns[#patterns + 1] = '(' .. name .. ')'
+      end
+    end
+    comment_langs[lang] = false
+    if #patterns > 0 then
+      local ok, query = pcall(vim.treesitter.query.parse, lang, '[' .. table.concat(patterns, ' ') .. '] @comment')
+      comment_langs[lang] = ok and { query = query, types = types }
+    end
+  end
+  return comment_langs[lang]
+end
+
+-- Every comment range in `buf` as { srow, scol, erow, ecol } (0-indexed, ecol
+-- exclusive). Walks the main parser and every injected child tree, keeping outermost
+-- comment nodes only (not the comment_content inside a Lua comment, nor the
+-- doc_comment inside a Rust one). {} if the buffer has no treesitter parser.
 local function comment_ranges(buf)
   local ranges = {}
   local ok, parser = pcall(vim.treesitter.get_parser, buf)
@@ -593,13 +627,20 @@ local function comment_ranges(buf)
   end
   parser:parse(true)
   local function walk(ltree)
-    local query = vim.treesitter.query.get(ltree:lang(), 'highlights')
-    if query then
+    local comments = comment_lang(ltree:lang())
+    if comments then
       for _, tree in pairs(ltree:trees()) do
-        for id, node in query:iter_captures(tree:root(), buf, 0, -1) do
-          local name = query.captures[id]
-          if name == 'comment' or name:sub(1, 8) == 'comment.' then
-            ranges[#ranges + 1] = { node:range() }
+        for _, node in comments.query:iter_captures(tree:root(), buf, 0, -1) do
+          local parent = node:parent()
+          if not (parent and comments.types[parent:type()]) then
+            local sr, sc, er, ec = node:range()
+            -- A node ending at column 0 owns its line break (Rust's /// doc comments):
+            -- it ends on the line before -- else the next line would count as comment.
+            if er > sr and ec == 0 then
+              er = er - 1
+              ec = #(vim.api.nvim_buf_get_lines(buf, er, er + 1, false)[1] or '')
+            end
+            ranges[#ranges + 1] = { sr, sc, er, ec }
           end
         end
       end
@@ -642,12 +683,133 @@ local function conceal_comments(buf)
   return #ranges
 end
 
+-- Set 'conceallevel' and 'concealcursor' in every window showing `buf`, for this buffer
+-- only (:setlocal): set plainly, they'd stay with the window and carry over to the next
+-- buffer opened there.
+local function set_conceal(buf, level, cursor)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    vim.api.nvim_set_option_value('conceallevel', level, { scope = 'local', win = win })
+    vim.api.nvim_set_option_value('concealcursor', cursor, { scope = 'local', win = win })
+  end
+end
+
+-- The hidden comments sharing line `lnum` (1-indexed) with code, as { scol, ecol } spans
+-- (0-indexed, ecol exclusive).
+local function hidden_spans(buf, lnum)
+  local spans = {}
+  local marks = vim.api.nvim_buf_get_extmarks(buf, comment_ns, { lnum - 1, 0 }, { lnum - 1, -1 }, { details = true })
+  for _, m in ipairs(marks) do
+    -- (Mid-Insert, before the rebuild, an edit can leave a span empty or across lines.)
+    if m[4].conceal and m[4].end_row == m[2] and m[4].end_col > m[3] then
+      spans[#spans + 1] = { m[3], m[4].end_col }
+    end
+  end
+  return spans
+end
+
+-- The next content line from `lnum` going `step` (1 down, -1 up), or nil.
+local function next_content_line(lnum, step)
+  local last = vim.fn.line('$')
+  local l = lnum + step
+  while l >= 1 and l <= last and not is_content_line(l) do
+    l = l + step
+  end
+  return (l >= 1 and l <= last) and l or nil
+end
+
+local function first_nonblank(lnum)
+  return (vim.fn.getline(lnum):find('%S') or 1) - 1
+end
+
+-- True when the cursor (`lnum`, 0-indexed `col`) is on the start of a last-search match.
+local function on_search_match(lnum, col)
+  local pattern = vim.fn.getreg('/')
+  local ok, pos = pcall(vim.fn.searchpos, pattern, 'cnW', lnum)
+  return pattern ~= '' and ok and pos[1] == lnum and pos[2] == col + 1
+end
+
+local guard_last = {} -- per window: where guard() last left the cursor, for its direction of travel
+
+-- Keep the cursor out of hidden comments: they can't be seen, so they can't be acted on.
+-- Off a hidden line, it goes on to the next content line in its direction of travel. In
+-- a comment sharing its line with code, it goes back to the end of the visible text, or
+-- over the comment onto the code after it.
+local function guard()
+  local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+  if not vim.b[buf].comments_hidden or vim.wo.conceallevel < 2 then
+    return
+  end
+  local pos = vim.api.nvim_win_get_cursor(win)
+  local lnum, col = pos[1], pos[2]
+  local prev = guard_last[win]
+  -- (Not moved at all -- the text changed under the cursor -- counts as backward.)
+  local forward = not prev or lnum > prev[1] or (lnum == prev[1] and col > prev[2])
+  local target
+  if is_hidden_comment_line(lnum) then
+    local l = next_content_line(lnum, forward and 1 or -1) or next_content_line(lnum, forward and -1 or 1)
+    target = l and { l, first_nonblank(l) }
+  else
+    local insert = vim.api.nvim_get_mode().mode:find('^[iR]') ~= nil
+    local len = #vim.api.nvim_get_current_line()
+    for _, span in ipairs(hidden_spans(buf, lnum)) do
+      local s, e = span[1], span[2]
+      -- In Insert mode the cursor sits between characters: right before the comment is
+      -- still visible text. A trailing comment takes everything after it, the end of line
+      -- too (where Visual $ goes).
+      if col >= (insert and s + 1 or s) and (col < e or e >= len) then
+        if e < len and (forward or s == 0) then
+          target = { lnum, e }
+        else
+          -- Forward past the end of the visible text by a search hit, or by w/e on the
+          -- line (not l, which lands right after it, nor $, at the line's end): on to the
+          -- next line, so repeating the move doesn't stall here.
+          local onward = not insert
+            and forward
+            and (on_search_match(lnum, col) or (prev and prev[1] == lnum and col ~= s and col < len - 1))
+          local l = onward and next_content_line(lnum, 1)
+          target = l and { l, first_nonblank(l) } or { lnum, insert and s or math.max(s - 1, 0) }
+        end
+        break
+      end
+    end
+  end
+  if target then
+    vim.api.nvim_win_set_cursor(win, target)
+  end
+  guard_last[win] = vim.api.nvim_win_get_cursor(win)
+end
+
+-- While hidden, `$` as a motion (d$, c$, y$; D and C go through it) ends with the visible
+-- text: an exclusive move to where a hidden trailing comment starts, not through it.
+local function map_visible_line_end(buf)
+  vim.keymap.set('o', '$', function()
+    local lnum, len = vim.fn.line('.'), #vim.fn.getline('.')
+    for _, span in ipairs(hidden_spans(buf, lnum)) do
+      if span[2] >= len then
+        return ('<Cmd>call cursor(%d, %d)<CR>'):format(lnum, span[1] + 1)
+      end
+    end
+    return '$'
+  end, { buffer = buf, expr = true, desc = 'To the end of the visible text' })
+  vim.keymap.set('n', 'D', 'd$', { buffer = buf, remap = true, desc = 'Delete to the end of the visible text' })
+  vim.keymap.set('n', 'C', 'c$', { buffer = buf, remap = true, desc = 'Change to the end of the visible text' })
+end
+
+local function unmap_visible_line_end(buf)
+  for _, map in ipairs({ { 'o', '$' }, { 'n', 'D' }, { 'n', 'C' } }) do
+    pcall(vim.keymap.del, map[1], map[2], { buffer = buf })
+  end
+end
+
+local comment_group = vim.api.nvim_create_augroup('hide_comments', { clear = true })
+
 function M.toggleComments()
   local buf = vim.api.nvim_get_current_buf()
-  local win = vim.api.nvim_get_current_win()
   if vim.b[buf].comments_hidden then
+    vim.api.nvim_clear_autocmds({ group = comment_group, buffer = buf })
     vim.api.nvim_buf_clear_namespace(buf, comment_ns, 0, -1)
-    vim.wo[win].conceallevel = vim.b[buf].comments_prev_cl or 0
+    unmap_visible_line_end(buf)
+    set_conceal(buf, vim.b[buf].comments_prev_cl or 0, vim.b[buf].comments_prev_cc or '')
     vim.b[buf].comments_hidden = false
     return
   end
@@ -655,9 +817,57 @@ function M.toggleComments()
     vim.notify('No comments to hide', vim.log.levels.INFO)
     return
   end
-  vim.b[buf].comments_prev_cl = vim.wo[win].conceallevel
-  vim.wo[win].conceallevel = 2
+  vim.b[buf].comments_prev_cl, vim.b[buf].comments_prev_cc = vim.wo.conceallevel, vim.wo.concealcursor
+  set_conceal(buf, 2, 'nvic') -- hidden on the cursor line too, in every mode
   vim.b[buf].comments_hidden = true
+  vim.b[buf].comments_tick = vim.b[buf].changedtick
+  map_visible_line_end(buf)
+  guard_last[vim.api.nvim_get_current_win()] = nil -- no travel yet: off a comment, down to its code
+  guard()
+  -- The marks are computed from the text, so rebuild them after every edit: stale,
+  -- they slide onto other lines and hide code (dd on a comment line moves its mark onto
+  -- the line below, J into one onto the joined line). TextChanged covers Normal-mode
+  -- edits, ModeChanged the end of Insert mode (TextChanged skips Insert-mode edits, and
+  -- InsertLeave misses <C-c>), BufReadPost reloads (:e!). Not on entering Insert mode:
+  -- after C deletes up to a hidden comment, a rebuild would count the cursor's spot as
+  -- part of the hidden gap before the comment, and the guard would push it left. The
+  -- changedtick check skips the events that come without an edit since the last rebuild.
+  vim.api.nvim_clear_autocmds({ group = comment_group, buffer = buf }) -- a :bdelete's leftovers
+  vim.api.nvim_create_autocmd({ 'TextChanged', 'ModeChanged', 'BufReadPost' }, {
+    group = comment_group,
+    buffer = buf,
+    callback = function(ev)
+      if not vim.b[buf].comments_hidden then
+        return true -- state wiped (:bdelete clears buffer vars, not autocmds): drop this
+      end
+      if ev.event == 'ModeChanged' and vim.v.event.new_mode:find('^[iR]') then
+        return
+      end
+      if vim.b[buf].changedtick ~= vim.b[buf].comments_tick then
+        vim.b[buf].comments_tick = vim.b[buf].changedtick
+        vim.api.nvim_buf_clear_namespace(buf, comment_ns, 0, -1)
+        conceal_comments(buf)
+        guard() -- the edit may have left the cursor in a comment (one just typed, an undo)
+      end
+    end,
+    desc = 'Re-hide comments after an edit',
+  })
+  vim.api.nvim_create_autocmd({ 'CursorMoved', 'CursorMovedI' }, {
+    group = comment_group,
+    buffer = buf,
+    callback = function(ev)
+      if not vim.b[buf].comments_hidden then
+        return true
+      end
+      -- After a Normal-mode edit the marks are stale until TextChanged, which fires right
+      -- after this, rebuilds them and guards. Insert mode rebuilds only when it ends, but
+      -- the marks follow the typing well enough.
+      if ev.event == 'CursorMovedI' or vim.b[buf].changedtick == vim.b[buf].comments_tick then
+        guard()
+      end
+    end,
+    desc = 'Keep the cursor out of hidden comments',
+  })
 end
 
 ------------------- Buffers
