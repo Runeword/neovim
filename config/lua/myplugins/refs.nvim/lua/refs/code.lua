@@ -389,14 +389,41 @@ function M.assignment(ref)
   end
 end
 
+-- What follows a name that an assignment doesn't assign, being the object, the
+-- container or the function of what follows it: `x.y`, `x->y`, `x?.y`, `x[k]`, `x(`
+local UNASSIGNED_AFTER = { '^%s*[%.%[%(]', '^%s*%->', '^%s*%?%.' }
+
+-- Whether reference `ref`, on a line of block `b` (see M.prepare), is what an assignment
+-- assigns (see M.assignment), never in a big file (which isn't parsed). Its line rules
+-- most references out before the syntax tree is read, sparing a list across many files
+-- their parses: one with no `=` after it there, or that UNASSIGNED_AFTER follows. (An
+-- assignment whose `=` comes on a later line is missed.)
+local function is_assigned(b, ref)
+  if b.file.big then
+    return false
+  end
+  local line = b.lines[ref.end_pos[1] - b.first + 1] or ''
+  local after = line:sub(ref.end_pos[2] + 1)
+  if not after:find('=', 1, true) then
+    return false
+  end
+  for _, pattern in ipairs(UNASSIGNED_AFTER) do
+    if after:find(pattern) then
+      return false
+    end
+  end
+  return M.assignment(ref) ~= nil
+end
+
 -- Prepare `refs`, references ({ filename, buf, pos, end_pos }, positions as { row,
 -- col }: the row 1-based, the col a 0-indexed byte; `def` set on a definition), for the
 -- list: grouped by file, an item ({ filename, buf, pos, refs }) per line of code holding
 -- some, the references on it in its `refs`, left to right, `pos` the first's.
 --
 -- Each item gets a `ref_kind`: `Definition` when one of its references is a definition,
--- else `Call` when one is a call (see is_call), else `Reference`: it marks the
--- definitions and the calls in the list.
+-- else `Assignment` when one is what an assignment assigns (see is_assigned), else
+-- `Call` when one is a call (see is_call), else `Reference`: it marks the definitions,
+-- the assignments and the calls in the list.
 --
 -- Each item also gets the code the list shows for it: its line (`code`, each of its
 -- references at bytes `match` of it, the end excluded) and the REF_CONTEXT lines around
@@ -492,9 +519,12 @@ function M.prepare(refs, read_files)
       for _, ref in ipairs(item.refs) do
         local to = ref.end_pos[1] == ref.pos[1] and shown_col(b, r, ref.end_pos[2]) or #item.code
         ref.match = { shown_col(b, r, ref.pos[2]), to }
+        local kind = item.ref_kind
         if ref.def then
           item.ref_kind = 'Definition'
-        elseif item.ref_kind == 'Reference' and is_call(b, ref) then
+        elseif (kind == 'Reference' or kind == 'Call') and is_assigned(b, ref) then
+          item.ref_kind = 'Assignment'
+        elseif kind == 'Reference' and is_call(b, ref) then
           item.ref_kind = 'Call'
         end
       end
