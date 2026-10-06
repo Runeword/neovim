@@ -3,7 +3,8 @@ local vim = vim
 -- The references panel: a list on the right of the references of the symbol under the
 -- cursor, grouped by file (the current file first), a line each (one for those sharing
 -- a line of code) with lines of code around it (see refs.code), and a preview pane under
--- it. A line holding a definition of the symbol is marked 󰓾, else one holding a call 󰊕.
+-- it. A line holding a definition of the symbol is marked 󰓾, else one assigning it 󰏫,
+-- else one holding a call 󰊕.
 -- It follows the cursor: whenever it rests in the code, the list shows the references
 -- of the symbol there, its own cursor on the reference under the code's, which it marks
 -- as the current one (RefsCurrent). The same answer again (another use of the symbol)
@@ -30,7 +31,11 @@ local DEFS_WAIT_MS = 150 -- how long the list waits for definitions not known ye
 
 -- The icon (and its highlight group) marking an item of the list by its `ref_kind` (see
 -- code.prepare)
-local KIND_ICONS = { Definition = { '󰓾 ', 'Constant' }, Call = { '󰊕 ', 'Function' } }
+local KIND_ICONS = {
+  Definition = { 'ƒ ', 'Constant' },
+  Assignment = { '= ', 'Statement' },
+  Call = { '󰅲 ', 'Function' },
+}
 
 -- The list: win, buf, rows (per line: { file, item, hls, lines, id, done }), key (the word
 -- it was last asked about or shown for, see key_of), sig (of the answer it shows), order
