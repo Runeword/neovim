@@ -10,7 +10,8 @@ local panel = require('refs.panel')
 local M = {}
 
 M.open = panel.open -- the panel, if it's closed
-M.toggle = panel.toggle -- the panel
+M.toggle = panel.toggle -- the panel (opened only with references to show)
+M.start = panel.start -- at start (UIEnter): the panel, if the cursor is on a symbol with references
 M.focus = panel.focus -- the panel, moving into it
 M.go = panel.go -- to the panel's next (dir 1) or previous (-1) reference; false if it's closed
 M.hop = hop.hop -- dir: 1 next, -1 previous
@@ -29,12 +30,19 @@ function M.setup()
 
   -- In the code, whenever the cursor settles: show its symbol in the panel and its
   -- definition in the pane, then (its own questions answered first) ask ahead about the
-  -- next hop targets
+  -- next hop targets. With the panel closed, ask ahead only, and at start see whether
+  -- the panel is to open (panel.start).
   local function settled()
     local buf = vim.api.nvim_get_current_buf()
+    local file = vim.bo[buf].buftype == '' and vim.api.nvim_buf_get_name(buf) ~= ''
     if vim.fn.win_gettype() == 'autocmd' then
       return -- (an autocommand's window, as :bwipeout runs LspDetach in, with the buffer going)
-    elseif vim.bo[buf].buftype == '' and vim.api.nvim_buf_get_name(buf) ~= '' and panel.is_open() then
+    elseif not panel.is_open() then
+      panel.starting()
+      if file then
+        hop.prefetch_here()
+      end
+    elseif file then
       panel.definition()
       panel.refresh(hop.prefetch_here)
     end
@@ -62,8 +70,8 @@ function M.setup()
   on('BufAdd', answers.buffer_added)
 
   -- The servers of a buffer changing, or one done loading the project (see
-  -- answers.warm_up), its answers are to be asked again. (The panel opens at start,
-  -- before any server attached.)
+  -- answers.warm_up), its answers are to be asked again. (At start, whether the panel
+  -- opens waits on them: they attach after UIEnter.)
   local function renew(buf)
     answers.forget(buf)
     panel.attached(buf)
