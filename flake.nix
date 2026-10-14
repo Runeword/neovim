@@ -298,7 +298,7 @@
               ccls
               nil
               alejandra
-              nixfmt-rfc-style
+              nixfmt
               shfmt
               shellcheck
               shellharden
