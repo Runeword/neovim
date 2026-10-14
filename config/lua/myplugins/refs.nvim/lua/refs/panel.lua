@@ -4,19 +4,26 @@ local vim = vim
 -- cursor, grouped by file (the current file first), a line each (one for those sharing
 -- a line of code) with lines of code around it (see refs.code), and a preview pane under
 -- it. A line holding a definition of the symbol is marked 󰓾, else one assigning it 󰏫,
--- else one holding a call 󰊕.
--- It follows the cursor: whenever it rests in the code, the list shows the references
--- of the symbol there, its own cursor on the reference under the code's, which it marks
--- as the current one (RefsCurrent). The same answer again (another use of the symbol)
--- only moves that cursor, and the files keep their order while the cursor is on a
--- reference the list shows (as when <Up>/<Down> take it from file to file). In the
--- code, the pane shows the definition of that symbol (the first, if several), in this
--- file or another, and stays blank when there is none; while you browse the list, the
--- reference under the list's cursor. From the code, <Up>/<Down> take the cursor to the
--- list's previous/next reference (M.go), where it is now: the references are tracked
--- through edits. The code shows the references the list shows marked RefsMatch, as the
--- list does, without the list's RefsCurrent on the current one: the cursor on it is
--- mark enough.
+-- else one holding a call 󰊕. A line on top counts the references: the current one's
+-- number (see below) out of how many the list shows, as 3/12; -/12 with none current.
+-- It follows the cursor: whenever it rests in the code on a symbol with references, the
+-- list shows them, its own cursor on the reference under the code's, which it marks as
+-- the current one (RefsCurrent). The same answer again (another use of the symbol) only
+-- moves that cursor, and the files keep their order while the cursor is on a reference
+-- the list shows (as when <Up>/<Down> take it from file to file). Where the cursor rests
+-- on no references (a keyword, a blank line), the list keeps the symbol it shows, its
+-- cursor where it was, none of its references current. In the code, the pane shows the
+-- definition of the symbol the list shows (the first, if several), in this file or
+-- another, and stays blank when there is none; while you browse the list, the reference
+-- under the list's cursor. From the code, <Up>/<Down> take the cursor to the list's
+-- previous/next reference (M.go), where it is now: the references are tracked through
+-- edits. The code shows the references the list shows marked RefsMatch, as the list
+-- does, without the list's RefsCurrent on the current one: the cursor on it is mark
+-- enough. Its count shows at the end of its line, as on the list's top line (3/12).
+--
+-- The panel is never open empty: it opens with references to show, as <Left>/<Right>
+-- land on a symbol, or gF or gf ask for it on one; at start, only if the cursor is on a
+-- symbol with references (M.start).
 --
 -- The panel's windows hold their buffers ('winfixbuf'), and are never all a tab page
 -- holds: when its last code window closes (:bdelete there), a code window takes its
@@ -37,13 +44,18 @@ local KIND_ICONS = {
   Call = { '󰅲 ', 'Function' },
 }
 
--- The list: win, buf, rows (per line: { file, item, hls, lines, id, done }), key (the word
--- it was last asked about or shown for, see key_of), sig (of the answer it shows), order
--- (of its files), gen (counts its drawings), asked (counts the questions M.refresh asked),
--- main (the code window last entered, where references open), prev (the window the list
--- was entered from), code (its references by buffer, see mark_code)
+-- The list: win, buf, rows (per line: { file, item, hls, lines, id, done }), count (of
+-- the references it shows), current (the current one: { ref, nth }, see mark_current),
+-- key (the word it was last asked about or shown for, see key_of), sig (of the answer it
+-- shows), order (of its files), gen (counts its drawings), asked (counts the questions
+-- M.refresh asked), main (the code window last entered, where references open), prev
+-- (the window the list was entered from), code (its references by buffer, see
+-- mark_code), shown (the word it shows the symbol of: { key, buf, pos, refs, defs (once
+-- known) }, see M.show)
 local list = { rows = {}, code = {} }
 local attached = {} -- [buf] = how many servers attached to it so far (see M.attached)
+local start -- the buffer Neovim started in, while the panel waits to know whether to open (see M.start)
+local opening -- the word gF asked for the panel on (see key_of), while the servers answer (see M.toggle)
 local ns = vim.api.nvim_create_namespace('refs.panel')
 local current_ns = vim.api.nvim_create_namespace('refs.current') -- (see mark_current)
 local code_ns = vim.api.nvim_create_namespace('refs.code') -- (see mark_code)
@@ -53,15 +65,20 @@ local code_ns = vim.api.nvim_create_namespace('refs.code') -- (see mark_code)
 -- grasp.nvim's on the node under the cursor would hide the reference there. (Under
 -- flash's labels, at 5000.)
 local CODE_PRIORITY = 4097
+-- The current reference's count, at the end of its line, goes first there: texts past
+-- the line's end come in order of priority, and a git blame of the line (gitsigns', at
+-- 100) or diagnostics (at the default 4096) would push it out of sight
+local COUNT_PRIORITY = 50
 
 -- The pane: win, buf (a copy of a file), blank (an empty buffer), and what it shows:
 -- file, version (of the file's text), key
 local pane = {}
 local pane_ns = vim.api.nvim_create_namespace('refs.pane')
+local PANE_PARSE_BYTES = 256 * 1024 -- a copy up to this big is parsed before the pane is drawn (see parse_pane)
 
--- Plain text even in the background, and a cursor line of the panel's own (see
--- after/plugin/colors.lua)
-local WINHIGHLIGHT = 'NormalNC:Normal,EndOfBuffer:Normal,CursorLine:RefsCursorLine'
+-- Plain text even in the background, the winbar's too (as the pane's), and a cursor line
+-- of the panel's own (see after/plugin/colors.lua)
+local WINHIGHLIGHT = 'NormalNC:Normal,EndOfBuffer:Normal,WinBar:Normal,WinBarNC:Normal,CursorLine:RefsCursorLine'
 
 -- The window options the panel sets, and their values in a code window (taken when it
 -- opens), for a window it gives back as a code window (see release)
@@ -292,7 +309,8 @@ end
 -- The references the list shows are marked in their files' buffers too, as the list
 -- marks them. Each gets an extmark there, without highlight (so it moves with edits, and
 -- tells where the reference is now, see ref_pos), once the buffer is loaded; the
--- decoration provider highlights those in view (M.mark), in the panel's tab page only.
+-- decoration provider highlights those in view (M.mark), in the panel's tab page only,
+-- and puts the current one's count (see mark_current) at the end of its line.
 
 -- Redraw the windows of this tab page showing a buffer of `bufs` ([buf] = anything), with
 -- the next screen update (without `flush = false`, nvim__redraw draws the screen at once)
@@ -383,8 +401,17 @@ local function ref_pos(ref)
   return ref.pos, ref.end_pos
 end
 
+-- The count of the references the list shows: the current one's number `nth` (see
+-- mark_current) out of all, as 3/12; -/12 without one. Blue as the files' paths, without
+-- a background: on the list's top line (count_bar), and in the code at the end of the
+-- current one's line (M.mark).
+local function count_chunk(nth)
+  return { ('%s/%d'):format(nth or '-', list.count), 'Directory' }
+end
+
 -- Highlight the references the list shows in `buf`, rows `toprow`..`botrow` (0-indexed)
--- of it being drawn: RefsMatch (in the panel's tab page only)
+-- of it being drawn: RefsMatch, and the current one's count at the end of its line (in
+-- the panel's tab page only)
 function M.mark(buf, toprow, botrow)
   if not M.is_open() then
     return
@@ -406,6 +433,20 @@ function M.mark(buf, toprow, botrow)
         ephemeral = true,
       })
     end
+  end
+  local cur = list.current
+  local from = cur and cur.ref.buf == buf and ref_pos(cur.ref)
+  if from then
+    vim.api.nvim_buf_set_extmark(buf, code_ns, from[1] - 1, 0, {
+      -- (after the line's end, past 'list''s eol char if shown: a blank between; not
+      -- inline, before it, as an ephemeral inline text isn't counted where the cursor
+      -- goes past the end, with 'virtualedit')
+      virt_text = { { ' ' }, count_chunk(cur.nth) },
+      virt_text_pos = 'eol',
+      priority = COUNT_PRIORITY,
+      strict = false,
+      ephemeral = true,
+    })
   end
 end
 
@@ -473,6 +514,18 @@ local function pane_buffer(item)
     end)
   end
   return buf
+end
+
+-- Parse the rows the pane shows of `buf` now. The highlighter's own first parse yields
+-- after 3ms, so a copy just made of a longer file would be drawn plain, then colored a
+-- frame later (the config's treesitter.lua does the same for the code windows). Above
+-- PANE_PARSE_BYTES the wait would be the worse of the two.
+local function parse_pane(buf)
+  local highlighter = vim.treesitter.highlighter.active[buf]
+  if highlighter and vim.api.nvim_buf_get_offset(buf, vim.api.nvim_buf_line_count(buf)) <= PANE_PARSE_BYTES then
+    local rows = { vim.fn.line('w0', pane.win) - 1, vim.fn.line('w$', pane.win) + 1 }
+    pcall(highlighter.tree.parse, highlighter.tree, { rows })
+  end
 end
 
 -- { text, hl } segments as a winbar
@@ -555,6 +608,7 @@ local function pane_show(item)
     vim.cmd('normal! zz')
   end)
   pane.key = key
+  parse_pane(buf)
 end
 
 -------------------- Windows
@@ -604,7 +658,7 @@ end
 -------------------- Sync
 
 -- Update the pane: while you browse the list, the reference under its cursor; in the
--- code, what the definition lookup for the cursor found, once it's in. Closes the pane
+-- code, the definition of the symbol the list shows, once it's in. Closes the pane
 -- once the list is gone (closed other than by M.close, as by :only) and drops the marks
 -- of its references in the code; gives back the list's window if another buffer took it
 -- (:edit! there); makes a code window again if none is left.
@@ -631,12 +685,8 @@ function M.sync()
   if win == list.win then
     pane_show(selected(win))
   elseif code_window(win) then
-    local buf, cursor = vim.api.nvim_win_get_buf(win), vim.api.nvim_win_get_cursor(win)
-    local pos = { cursor[1] - 1, cursor[2] }
-    local defs = answers.known(buf, pos, 'defs')
-    if defs == nil and pane.defs and pane.defs.key == key_of(buf, pos) then
-      defs = pane.defs.answer -- (see M.definition)
-    end
+    -- (that of the symbol under the cursor, or with no references there, the one before)
+    local defs = list.shown and list.shown.defs
     if defs == nil then
       return pane_show(nil) -- (until the lookup is in)
     end
@@ -666,17 +716,21 @@ function M.closed(args)
   M.sync_later()
 end
 
--- Look up the definitions of the symbol under the cursor, for the pane (the questions
--- about where the cursor was before, no longer of use, cancelled)
+-- Look up the definitions of the symbol under the cursor, for the pane and the list's
+-- marks (the questions about where the cursor was before, no longer of use, cancelled)
 function M.definition()
   local buf, cursor = vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)
   local pos = { cursor[1] - 1, cursor[2] }
   answers.cancel('definition', word_key(buf, pos))
   local key = key_of(buf, pos)
   answers.ask(buf, pos, 'defs', function(defs)
-    -- (kept for the pane: one passed on but not remembered, as when a server failed its
+    -- (kept for the list: one passed on but not remembered, as when a server failed its
     -- part, counts too)
     pane.defs = { key = key, answer = defs }
+    local shown = list.shown -- (the pane shows them if the list shows that word, unedited)
+    if defs ~= nil and shown and shown.key == key and vim.api.nvim_buf_is_valid(buf) and key_of(buf, pos) == key then
+      shown.defs = defs
+    end
     M.sync()
   end, 'definition')
 end
@@ -694,8 +748,10 @@ end
 -- numbers. A context line gets the tree guide continued down, then blanks and its line
 -- number under the reference's icon and line number columns. list.rows gets per line
 -- { file, header | item | owner (the item a context line or gap goes with), block and row
--- (of a context line's code), hls ({ from, to, hl }), code_col (where its code starts) }.
--- Returns the drawing: { lines, rows, order (of the files' names), files } (see write).
+-- (of a context line's code), hls ({ from, to, hl }), code_col (where its code starts),
+-- nth (an item's: the number of its first reference in the list) }.
+-- Returns the drawing (see write): { lines, rows, order (of the files' names), files,
+-- count (of the references) }.
 local function build(files, lnum_width, code_buf, order)
   local rank = {}
   for i, filename in ipairs(order or {}) do
@@ -713,7 +769,7 @@ local function build(files, lnum_width, code_buf, order)
     end
     return a.filename < b.filename
   end)
-  local names, lines, rows = {}, {}, {}
+  local names, lines, rows, count = {}, {}, {}, 0 -- (count: the references listed so far)
   -- A list line of { text, hl } segments, for `row`; `code` given, it ends the line
   local function add(segments, row, text)
     local parts, col = {}, 0
@@ -762,14 +818,26 @@ local function build(files, lnum_width, code_buf, order)
         KIND_ICONS[item.ref_kind] or { '  ' },
         { ('%' .. lnum_width .. 'd'):format(item.pos[1]), 'LineNr' },
         { ' ' },
-      }, { file = f, item = item, block = item.block, row = item.pos[1] }, item.code)
+      }, { file = f, item = item, block = item.block, row = item.pos[1], nth = count + 1 }, item.code)
+      count = count + #item.refs
       for r = item.below[1], item.below[2] do
         context(f, item, more and '│ ' or '  ', item.block, r)
       end
     end
   end
 
-  return { lines = lines, rows = rows, order = names, files = files }
+  return { lines = lines, rows = rows, order = names, files = files, count = count }
+end
+
+-- Count the references the list shows on its top line (its winbar): the current one's
+-- number `nth` (see mark_current) out of all (see count_chunk)
+local function count_bar(nth)
+  if valid(list.win) and vim.api.nvim_win_get_buf(list.win) == list.buf then
+    local bar = winbar({ { '  ' }, count_chunk(nth) })
+    if vim.wo[list.win].winbar ~= bar then
+      vim.wo[list.win].winbar = bar
+    end
+  end
 end
 
 -- Write `drawing` (see build) into the list
@@ -783,7 +851,8 @@ local function write(drawing)
   if not ok then
     error(err)
   end
-  list.rows, list.order = drawing.rows, drawing.order
+  list.rows, list.order, list.count, list.current = drawing.rows, drawing.order, drawing.count, nil
+  count_bar() -- (none current any more)
 end
 
 -- The last drawings (see build), by answer and order: going back to a symbol shown a
@@ -895,14 +964,28 @@ local function find(buf, pos)
 end
 
 -- Mark reference `k` of the item on list line `row` as the current one, the one under
--- the code's cursor, over its RefsMatch (RefsCurrent); without a `row`, none
+-- the code's cursor, over its RefsMatch (RefsCurrent), and count it (see count_bar, and
+-- M.mark in the code); without a `row`, none
 local function mark_current(row, k)
   vim.api.nvim_buf_clear_namespace(list.buf, current_ns, 0, -1)
   local item = row and list.rows[row].item
+  local was = list.current
+  list.current = item and { ref = item.refs[k], nth = list.rows[row].nth + k - 1 } or nil
   if item then
     local col, match = list.rows[row].code_col, item.refs[k].match
     local opts = { end_col = col + match[2], hl_group = 'RefsCurrent', priority = 4098 }
     vim.api.nvim_buf_set_extmark(list.buf, current_ns, row - 1, col + match[1], opts)
+  end
+  count_bar(list.current and list.current.nth)
+  local now = list.current
+  if (was and was.ref) ~= (now and now.ref) then
+    local bufs = {} -- (the count moves in the code: off the line it was on, onto its new one)
+    for _, c in pairs({ was, now }) do
+      if c.ref.buf then
+        bufs[c.ref.buf] = true
+      end
+    end
+    redraw_code(bufs)
   end
 end
 
@@ -990,20 +1073,91 @@ local function mark_definitions(refs, defs)
   first.def = true
 end
 
+-- Whether `refs` (see refs.answers) holds a reference: the list has something to show
+local function holds(refs)
+  for _, r in ipairs(type(refs) == 'table' and refs or {}) do
+    if #r.result > 0 then
+      return true
+    end
+  end
+  return false
+end
+
+-- No references to show for the word at `pos` in `code_buf`: the list keeps the symbol
+-- it shows, none of its references current (the cursor isn't on one); with none shown
+-- yet, the panel closes (it's never open empty)
+local function unshown(code_buf, pos)
+  list.key, list.waiting = key_of(code_buf, pos), nil
+  if #list.rows == 0 then
+    return M.close()
+  end
+  mark_current()
+end
+
+-- Draw `refs`, the references of the symbol at `pos` in `code_buf`, `defs` its
+-- definitions (nil while not known), unless the list shows that already. False when
+-- there's nothing to draw: each location is past the end of its file (a server behind on
+-- edits).
+local function render(code_buf, pos, refs, defs)
+  local sig = answers.sig(refs) .. ':' .. answers.sig(defs)
+  if sig == list.sig then
+    return true
+  end
+  local same = list.sig ~= nil and find(code_buf, pos) ~= nil -- (the cursor on a reference the list shows)
+  local order = same and list.order or nil
+  local drawn_key = sig .. '\0' .. (order and table.concat(order, '\0') or vim.api.nvim_buf_get_name(code_buf))
+  local drawing = drawings[drawn_key]
+  for _, f in ipairs(drawing and drawing.files or {}) do
+    if f.buf and not vim.api.nvim_buf_is_valid(f.buf) then
+      drawing = nil -- (a file's buffer wiped since: opened again, the file has another)
+      break
+    end
+  end
+  if drawing then
+    drawn = drawn + 1
+    drawing.used = drawn
+  else
+    local read_files = {} -- (each file read once, see code.prepare)
+    local items = locations(refs, read_files)
+    mark_definitions(items, locations(defs, read_files))
+    local files, lnum_width = code.prepare(items, read_files)
+    drawing = build(files, lnum_width, code_buf, order)
+    keep(drawn_key, drawing)
+  end
+  if #drawing.lines == 0 then
+    return false
+  end
+  local view = vim.api.nvim_win_call(list.win, vim.fn.winsaveview)
+  write(drawing)
+  vim.api.nvim_win_call(list.win, function()
+    vim.fn.winrestview(view)
+  end)
+  list.sig, list.gen = sig, (list.gen or 0) + 1
+  mark_code(drawing.files)
+  vim.wo[list.win].cursorline = #list.rows > 0 -- (an empty list still has a line to highlight)
+  return true
+end
+
 -- Show `refs` (see refs.answers), the references of the symbol at `pos` in `code_buf`,
--- its definitions marked. When those aren't known yet, it asks for them, and waits for
--- them a moment (DEFS_WAIT_MS) to draw the list once, unless `now` (a hop landing): drawn
--- without them, it draws again once they come (if it still shows that, the code buffer
+-- its definitions marked; with none, the list keeps what it shows (see unshown). When
+-- the definitions aren't known yet, it asks for them, and waits for them a moment
+-- (DEFS_WAIT_MS) to draw the list once, unless `now` (a hop landing): drawn without
+-- them, it draws again once they come (if it still shows that, the code buffer
 -- unedited).
 function M.show(code_buf, pos, refs, now, given_defs)
   if not (M.is_open() and vim.api.nvim_buf_is_valid(code_buf)) then
     return
+  elseif not holds(refs) then
+    return unshown(code_buf, pos)
   end
   local key = key_of(code_buf, pos)
   list.key = key
   local defs = answers.known(code_buf, pos, 'defs')
   if defs == nil then
     defs = given_defs -- (passed on but not remembered, see refs.answers)
+  end
+  if defs == nil and pane.defs and pane.defs.key == key then
+    defs = pane.defs.answer -- (the same, asked for by M.definition)
   end
   if defs == nil and not now then
     list.waiting = key
@@ -1020,41 +1174,26 @@ function M.show(code_buf, pos, refs, now, given_defs)
     return
   end
   list.waiting = nil
-  local sig = answers.sig(refs) .. ':' .. answers.sig(defs)
-  if sig ~= list.sig then
-    local same = list.sig ~= nil and find(code_buf, pos) ~= nil -- (the cursor on a reference the list shows)
-    local order = same and list.order or nil
-    local drawn_key = sig .. '\0' .. (order and table.concat(order, '\0') or vim.api.nvim_buf_get_name(code_buf))
-    local drawing = drawings[drawn_key]
-    if drawing then
-      drawn = drawn + 1
-      drawing.used = drawn
-    else
-      local read_files = {} -- (each file read once, see code.prepare)
-      local items = locations(refs, read_files)
-      mark_definitions(items, locations(defs, read_files))
-      local files, lnum_width = code.prepare(items, read_files)
-      drawing = build(files, lnum_width, code_buf, order)
-      keep(drawn_key, drawing)
-    end
-    local view = vim.api.nvim_win_call(list.win, vim.fn.winsaveview)
-    write(drawing)
-    vim.api.nvim_win_call(list.win, function()
-      vim.fn.winrestview(view)
-    end)
-    list.sig, list.gen = sig, (list.gen or 0) + 1
-    mark_code(drawing.files)
-    vim.wo[list.win].cursorline = #list.rows > 0 -- (an empty list still has a line to highlight)
+  if not render(code_buf, pos, refs, defs) then
+    return unshown(code_buf, pos)
   end
+  local shown = { key = key, buf = code_buf, pos = pos, refs = refs, defs = defs }
+  list.shown = shown
   follow(code_buf, pos)
   M.sync()
   if defs == nil then
-    local gen = list.gen
     answers.ask(code_buf, pos, 'defs', function(found)
-      local again = found and #found > 0 and list.gen == gen and list.key == key
-      if again and vim.api.nvim_buf_is_valid(code_buf) and key_of(code_buf, pos) == key then
-        M.show(code_buf, pos, refs, true, found)
+      -- (it still shows that, the code buffer unedited; even with the cursor gone where
+      -- there are no references since)
+      local unedited = vim.api.nvim_buf_is_valid(code_buf) and key_of(code_buf, pos) == key
+      if found == nil or list.shown ~= shown or not (M.is_open() and unedited) then
+        return
       end
+      shown.defs = found
+      if found and #found > 0 and render(code_buf, pos, refs, found) and list.key == key then
+        follow(code_buf, pos) -- (the cursor still on it: its reference is current again)
+      end
+      M.sync()
     end, 'show')
   end
 end
@@ -1099,6 +1238,25 @@ function M.refresh(after)
   end, 'refresh')
 end
 
+-- The cursor is still in window `win` on the word of `buf` asked about as `key` (it's
+-- the current window, showing `buf`)
+local function still(win, buf, key)
+  if vim.api.nvim_get_current_win() ~= win or vim.api.nvim_win_get_buf(win) ~= buf then
+    return false
+  end
+  local now = vim.api.nvim_win_get_cursor(win)
+  return key_of(buf, { now[1] - 1, now[2] }) == key
+end
+
+-- Open the panel showing `refs`, the references of the symbol at `pos` in `buf` (the word
+-- asked about as `key`), drawn in the same screen update
+local function open_showing(buf, pos, key, refs)
+  M.open()
+  if list.key ~= key or list.waiting == key then -- (not drawn yet, or waiting on the definitions to be)
+    M.show(buf, pos, refs, true)
+  end
+end
+
 -- Show the references of the symbol under the cursor and move into the list, onto the
 -- reference under the cursor, once the servers have answered; with none, say so and
 -- stay (`gf`)
@@ -1111,21 +1269,14 @@ function M.focus()
   end
   local key = key_of(buf, pos)
   answers.ask(buf, pos, 'refs', function(refs)
-    local here = vim.api.nvim_get_current_win() == win and vim.api.nvim_win_get_buf(win) == buf
-    local now = here and vim.api.nvim_win_get_cursor(win)
-    if refs == nil or not (now and key_of(buf, { now[1] - 1, now[2] }) == key) then
+    if refs == nil or not still(win, buf, key) then
       return -- (no answer, or you moved on meanwhile)
-    end
-    local found = 0
-    for _, r in ipairs(refs or {}) do
-      found = found + #r.result
-    end
-    if found == 0 then
+    elseif not holds(refs) then
       return vim.notify('No references', vim.log.levels.WARN)
     end
-    M.open()
-    if list.key ~= key or list.waiting == key then -- (not drawn yet, or waiting on the definitions to be)
-      M.show(buf, pos, refs, true)
+    open_showing(buf, pos, key, refs)
+    if not M.is_open() then
+      return -- (nothing to show after all: each reference past the end of its file)
     end
     follow(buf, pos)
     vim.api.nvim_set_current_win(list.win)
@@ -1213,17 +1364,20 @@ end
 -- item holds come in turn, so the list's cursor stays on it meanwhile. A reference is
 -- gone to where it is now (edits since the list was drawn moved it); one whose text is
 -- gone is passed over. False when the list isn't open here, holds nothing, or this isn't
--- a code window: the arrows then do what they do without it.
+-- a code window: the arrows then do what they do without it. (While gF waits on the
+-- servers to open it on the word under the cursor, true, doing nothing, see M.toggle.)
 function M.go(dir)
   local win = vim.api.nvim_get_current_win()
-  if not (M.is_open() and code_window(win)) then
+  if not code_window(win) then
     return false
   end
   local buf, cursor = vim.api.nvim_win_get_buf(win), vim.api.nvim_win_get_cursor(win)
-  if not item_row(0, 1) then
+  local key = key_of(buf, { cursor[1] - 1, cursor[2] })
+  if not M.is_open() then
+    return opening == key
+  elseif not item_row(0, 1) then
     -- (empty while the references of the word under the cursor are on their way: wait
     -- for them, as the panel just opened)
-    local key = key_of(buf, { cursor[1] - 1, cursor[2] })
     return list.asking == key or list.waiting == key
   end
   local row = vim.api.nvim_win_get_cursor(list.win)[1]
@@ -1292,8 +1446,10 @@ local function cycle()
   end
 end
 
--- Open the panel on the right, then show the symbol under the cursor
+-- Open the panel on the right, then show the symbol under the cursor (closed again if
+-- that has no references, unless something else got shown meanwhile, see unshown)
 function M.open()
+  start = nil -- (no longer waiting to open at start)
   if M.is_open() then
     return
   end
@@ -1303,7 +1459,7 @@ function M.open()
   local buf = scratch_buf()
   vim.bo[buf].filetype = 'refs'
   vim.bo[buf].modifiable = false
-  list.buf, list.rows, list.key, list.sig, list.order = buf, {}, nil, nil, nil
+  list.buf, list.rows, list.count, list.key, list.sig, list.order, list.shown = buf, {}, 0, nil, nil, nil, nil
   local function map(lhs, fn, desc)
     vim.keymap.set('n', lhs, fn, { buffer = buf, nowait = true, desc = desc })
   end
@@ -1359,7 +1515,9 @@ function M.open()
   local wo = vim.wo[list.win]
   wo.number, wo.relativenumber, wo.signcolumn, wo.foldcolumn, wo.statuscolumn = false, false, 'no', '0', ''
   wo.cursorline, wo.wrap, wo.list, wo.spell, wo.winfixwidth = false, false, false, false, true -- (see M.show)
-  wo.winbar, wo.fillchars, wo.winhighlight, wo.winfixbuf = '', 'eob: ', WINHIGHLIGHT, true
+  -- (the count's line there from the start, blank until there's something to count: the
+  -- list doesn't lose a line under it once drawn)
+  wo.winbar, wo.fillchars, wo.winhighlight, wo.winfixbuf = ' ', 'eob: ', WINHIGHLIGHT, true
   vim.api.nvim_win_call(list.win, function()
     vim.cmd('clearjumps')
   end)
@@ -1370,17 +1528,73 @@ function M.open()
   end
 end
 
+-- Close the panel, or open it if the symbol under the cursor has references (once the
+-- servers have answered); with none, say so
 function M.toggle()
   if M.is_open() then
-    M.close()
-  else
-    M.open()
+    return M.close()
   end
+  local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+  if vim.bo[buf].buftype ~= '' or vim.api.nvim_buf_get_name(buf) == '' then
+    return vim.notify('No references', vim.log.levels.WARN)
+  end
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local pos = { cursor[1] - 1, cursor[2] }
+  local key = key_of(buf, pos)
+  opening = key -- (<Up>/<Down> wait for it, see M.go)
+  answers.ask(buf, pos, 'refs', function(refs)
+    if opening == key then
+      opening = nil
+    end
+    if refs == nil or M.is_open() or not still(win, buf, key) then
+      return -- (no answer, opened meanwhile, or you moved on)
+    elseif not holds(refs) then
+      return vim.notify('No references', vim.log.levels.WARN)
+    end
+    open_showing(buf, pos, key, refs)
+  end, 'toggle')
+end
+
+-- At start (UIEnter), in a file (not a man page, help or a diff): the panel opens if the
+-- cursor is on a symbol with references. The servers attach after it, so it's asked as
+-- the cursor settles (M.starting) until a server answers about where it rests, or you
+-- leave the buffer.
+function M.start()
+  if vim.bo.buftype == '' and not vim.wo.diff and vim.api.nvim_buf_get_name(0) ~= '' then
+    start = vim.api.nvim_get_current_buf()
+    M.starting()
+  end
+end
+
+-- The cursor settled, the panel closed: at start, open it if the symbol there has
+-- references (see M.start)
+function M.starting()
+  local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+  if buf ~= start or M.is_open() then
+    start = nil
+    return
+  end
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local pos = { cursor[1] - 1, cursor[2] }
+  local key = key_of(buf, pos)
+  answers.cancel('start', word_key(buf, pos))
+  answers.ask(buf, pos, 'refs', function(refs)
+    -- (false: no server serving references attached yet; nil: none answered; or you moved
+    -- on. Asked again once one attaches, or where the cursor settles.)
+    if start ~= buf or not refs or not still(win, buf, key) then
+      return
+    elseif holds(refs) then
+      open_showing(buf, pos, key, refs)
+    else
+      start = nil -- (a server's answer of nothing there: the panel stays closed)
+    end
+  end, 'start')
 end
 
 -- Close the panel when the window being quit (QuitPre) is the tab page's last code
 -- window, so :q there quits Neovim, or closes the tab page or the window, as it would
--- without the panel; it opens again if the quit is refused (changes not written)
+-- without the panel; it opens again if the quit is refused (changes not written),
+-- showing what it showed
 function M.quitting()
   if not M.is_open() then
     return
@@ -1391,10 +1605,15 @@ function M.quitting()
       return -- (code is left to show the references of)
     end
   end
+  local shown = list.shown
   M.close()
   vim.schedule(function()
     if code_window(win) and vim.api.nvim_get_current_win() == win and not M.is_open() then
       M.open()
+      if shown and vim.api.nvim_buf_is_valid(shown.buf) then
+        -- (before M.open's own answer about the cursor: kept if there are no references there)
+        M.show(shown.buf, shown.pos, shown.refs, true, shown.defs)
+      end
     end
   end)
 end
