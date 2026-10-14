@@ -23,7 +23,7 @@ Use **dev mode** while iterating on Lua config. Use **bundled mode** (or `nix bu
 ### Formatting
 
 - Lua: `stylua` (config at `config/.stylua.toml` + `config/editorconfig` — 2-space indent, single quotes, max line 120, trailing table separator always).
-- Nix: `nixfmt` (nixfmt-rfc-style).
+- Nix: `nixfmt`.
 
 Both are on the dev-shell `PATH` via the `Runeword/lefthook` flake input, which also renders the pre-commit hooks into `lefthook-generated.yml` (committed; regenerated on shell entry) and installs them. `lefthook.yml` just extends it. Commits auto-format Lua and Nix, lint Nix (`deadnix` + `statix`), and scan for secrets (`gitleaks`).
 
