@@ -48,21 +48,20 @@ return {
     },
   },
 
-  -- Loaded at start, as the panel opens then. (A require() wouldn't load it: lazy.nvim
+  -- Loaded at start, as the panel can open then. (A require() wouldn't load it: lazy.nvim
   -- takes a module's plugin from its path up to the first /lua/, here the config's own.)
   lazy = false,
 
   config = function()
     require('refs').setup()
-    -- The panel opens at start, beside the file (not beside a man page, help or a diff,
-    -- nor in a run without a UI, as headless)
+    -- At start, the panel opens beside the file if the cursor is on a symbol with
+    -- references, once a server can tell (not beside a man page, help or a diff, nor in a
+    -- run without a UI, as headless)
     vim.api.nvim_create_autocmd('UIEnter', {
       group = vim.api.nvim_create_augroup('refs_start', { clear = true }),
       once = true,
       callback = function()
-        if vim.bo.buftype == '' and not vim.wo.diff then
-          require('refs').open()
-        end
+        require('refs').start()
       end,
     })
   end,
