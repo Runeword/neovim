@@ -30,11 +30,48 @@ return {
     -- but setup() must be called or :TSInstall et al. won't work.
     require('nvim-treesitter').setup({})
 
+    local group = vim.api.nvim_create_augroup('TreesitterStart', { clear = true })
+
+    -- Parse what a buffer's windows are about to draw, without yielding, so a
+    -- file opens already colored. The highlighter's own first parse
+    -- (highlighter.lua `_on_start`) yields after 3ms and repaints once done, so
+    -- any file that takes longer (~1500+ lines of Lua) first shows a frame of
+    -- plain white text. Measured on fresh buffers: the root tree, always parsed
+    -- whole, costs ~0.2ms/KB of Lua (61KB: 12ms), 0.15 Python, 0.07 TS, 0.4
+    -- markdown. Injections cost little per screen (Lua 0.3ms, markdown 5ms) but
+    -- a lot per file (that 61KB Lua: 22ms in all, a 60KB README: 72ms). So a
+    -- small file gets all its injections, sparing its scrolling a repaint per
+    -- new screen (markdown's 5ms exceed the 3ms); a bigger one only those in
+    -- the rows on screen (the rows `_on_start` asks for); and past ~50ms of Lua
+    -- (~100ms of markdown) a white frame beats the freeze, so it stays async.
+    -- Edits always re-parse asynchronously (we don't set the global
+    -- `vim.g._ts_force_sync_parsing`).
+    local parse_all_max_bytes = 64 * 1024
+    local sync_parse_max_bytes = 256 * 1024
+    local function parse_before_draw(buf)
+      local highlighter = vim.treesitter.highlighter.active[buf]
+      local bytes = vim.api.nvim_buf_get_offset(buf, vim.api.nvim_buf_line_count(buf))
+      if not highlighter or bytes > sync_parse_max_bytes then
+        return
+      end
+      local ranges = {}
+      for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+        table.insert(ranges, { vim.fn.line('w0', win) - 1, vim.fn.line('w$', win) + 1 })
+      end
+      if #ranges == 0 then
+        return
+      end
+      table.sort(ranges, function(a, b)
+        return a[1] < b[1]
+      end)
+      pcall(highlighter.tree.parse, highlighter.tree, bytes <= parse_all_max_bytes or ranges)
+    end
+
     -- Enable highlight + indent per buffer. The new API delegates to
     -- Neovim's built-in vim.treesitter; nvim-treesitter only provides
     -- the indent helper.
     vim.api.nvim_create_autocmd('FileType', {
-      group = vim.api.nvim_create_augroup('TreesitterStart', { clear = true }),
+      group = group,
       callback = function(args)
         local bufnr = args.buf
         -- Minified/long-line guard: a file can sit under big_file's byte
@@ -52,23 +89,20 @@ return {
         end
         local lang = vim.treesitter.language.get_lang(vim.bo[bufnr].filetype)
         if lang and pcall(vim.treesitter.start, bufnr, lang) then
-          -- Force a synchronous initial parse so syntax highlights are present
-          -- on the first redraw instead of flashing in a frame later: the
-          -- highlighter's own first parse (highlighter.lua `_on_start`) uses the
-          -- async callback form of `LanguageTree:parse`, which yields after a 3ms
-          -- budget and only repaints once the async parse lands. Parsing here
-          -- without a callback runs to completion, so the tree is valid on the
-          -- first redraw. But a full parse is O(file size) (measured ~4-6ms at
-          -- ~150-220 lines, ~15ms at ~1400, 100ms+ beyond), so cap it — larger
-          -- buffers keep the async path (a brief flash beats a long freeze).
-          -- Edits always re-parse asynchronously (we don't set the global
-          -- `vim.g._ts_force_sync_parsing`); big/minified files returned above.
-          if vim.api.nvim_buf_line_count(bufnr) <= 1500 then
-            pcall(function()
-              vim.treesitter.get_parser(bufnr, lang):parse(true)
-            end)
-          end
+          parse_before_draw(bufnr)
           vim.bo[bufnr].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+        end
+      end,
+    })
+
+    -- A buffer entering a window shows new rows, and at startup or :edit this
+    -- runs after the view autocmd (autocmd.lua, defined first) has restored the
+    -- cursor, so these are the rows the first redraw draws.
+    vim.api.nvim_create_autocmd('BufWinEnter', {
+      group = group,
+      callback = function(args)
+        if vim.b[args.buf].ts_highlight then
+          parse_before_draw(args.buf)
         end
       end,
     })
