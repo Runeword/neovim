@@ -255,13 +255,14 @@ local LONG_LIST = 300 -- references from which a landing's list is drawn after t
 -- Land on `pos`, whose references are `refs`: the cursor there, the panel (opened if
 -- needed) showing them and the pane its definition, the next landings asked about. The
 -- panel follows in the same screen update, but for a long list, drawn right after it (if
--- the cursor is still there): the cursor never waits on a list of thousands.
+-- the cursor is still there): the cursor never waits on a list of thousands. (The panel
+-- opens as it's drawn: never empty.)
 local function land(job, pos, refs)
   vim.api.nvim_win_set_cursor(job.win, { pos[1] + 1, pos[2] })
   job.at, job.landed = pos, true
   job.steps = job.steps - 1
-  panel.open()
   local function show()
+    panel.open()
     panel.show(job.buf, pos, refs, true)
     panel.definition()
   end
