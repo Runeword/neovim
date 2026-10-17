@@ -96,7 +96,50 @@ return {
             require('bufferline.groups').builtin.pinned:with({ icon = '' }),
           },
         },
+        -- A click on a buffer from a panel holding its own ('winfixbuf': the file tree, the
+        -- references panel) shows it in a code window, the one left last if it's one
+        left_mouse_command = function(buffer)
+          if vim.wo.winfixbuf then
+            local wins = vim.api.nvim_tabpage_list_wins(0)
+            table.insert(wins, 1, vim.fn.win_getid(vim.fn.winnr('#')))
+            for _, win in ipairs(wins) do
+              if
+                win ~= 0
+                and not vim.wo[win].winfixbuf
+                and vim.bo[vim.api.nvim_win_get_buf(win)].buftype == ''
+                and vim.api.nvim_win_get_config(win).relative == ''
+              then
+                vim.api.nvim_set_current_win(win)
+                break
+              end
+            end
+          end
+          vim.cmd.buffer(buffer)
+        end,
+        -- Over the file tree (myplugins/filetree.nvim), the directory it shows
+        offsets = {
+          {
+            filetype = 'filetree',
+            text = function()
+              return require('filetree').title()
+            end,
+            text_align = 'left',
+            highlight = 'FileTreeTitle',
+            separator = true,
+          },
+        },
       },
     })
+
+    -- In the file tree (myplugins/filetree.nvim), the file under its cursor, open as a buffer,
+    -- has its tab as the current buffer's (white)
+    local Buffer = require('bufferline.models').Buffer
+    local current = Buffer.current
+    function Buffer:current()
+      if vim.bo.filetype == 'filetree' then
+        return require('filetree').cursor_buffer() == self.id
+      end
+      return current(self)
+    end
   end,
 }
