@@ -112,6 +112,15 @@ local function apply()
 
   vim.api.nvim_set_hl(0, 'RefsCursorLine', { bg = '#1e2633' }) -- the references panel's (myplugins/refs.nvim)
 
+  -- The file tree's (myplugins/filetree.nvim): the files open as buffers white, as the
+  -- bufferline's current buffer, the current one bold; folders as nightfly's NvimTree
+  -- ones (grey-blue icons, blue names); the directory over it as the bufferline's buffers
+  vim.api.nvim_set_hl(0, 'FileTreeOpened', { fg = 'white' })
+  vim.api.nvim_set_hl(0, 'FileTreeCurrent', { fg = 'white', bold = true })
+  vim.api.nvim_set_hl(0, 'FileTreeFolderIcon', { fg = '#7c8f8f' })
+  vim.api.nvim_set_hl(0, 'FileTreeCursorLine', { bg = '#1e2633' })
+  vim.api.nvim_set_hl(0, 'FileTreeTitle', { fg = '#7a7c9e' })
+
   vim.api.nvim_set_hl(0, 'NotifyERRORBorder', { link = 'FloatBorder' })
   vim.api.nvim_set_hl(0, 'NotifyWARNBorder', { link = 'FloatBorder' })
   vim.api.nvim_set_hl(0, 'NotifyINFOBorder', { link = 'FloatBorder' })
