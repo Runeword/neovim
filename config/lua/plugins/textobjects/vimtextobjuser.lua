@@ -14,9 +14,9 @@ return {
     end,
 
     config = function()
-      vim.keymap.set({ 'o', 'x', }, 'am', '<Plug>(textobj-chainmember-a)')
-      vim.keymap.set({ 'o', 'x', }, 'im', '<Plug>(textobj-chainmember-i)')
-      vim.keymap.set({ 'o', },      'm',  '<Plug>(textobj-chainmember-i)')
+      vim.keymap.set({ 'o', 'x' }, 'am', '<Plug>(textobj-chainmember-a)')
+      vim.keymap.set({ 'o', 'x' }, 'im', '<Plug>(textobj-chainmember-i)')
+      vim.keymap.set({ 'o' }, 'm', '<Plug>(textobj-chainmember-i)')
       -- vim.keymap.set({ 'o', 'x', }, 'aom', '<Plug>(textobj-chainmember-last-a)')
       -- vim.keymap.set({ 'o', 'x', }, 'iom', '<Plug>(textobj-chainmember-last-i)')
       -- vim.keymap.set({ 'o', 'x', }, 'anm', '<Plug>(textobj-chainmember-next-a)')
@@ -28,6 +28,8 @@ return {
     dependencies = 'kana/vim-textobj-user',
 
     config = function()
+      -- yc = yac. Normal-mode only: the o-mode `c` below would also turn cc into "change a comment".
+      vim.keymap.set({ 'n' }, 'yc', 'yac', { remap = true })
       -- vim.keymap.set({ 'o', }, 'c', 'ac', { remap = true, })
       -- vim.keymap.set({ 'o', }, 'C', 'aC', { remap = true, })
     end,
