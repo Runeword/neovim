@@ -1618,9 +1618,13 @@ function M.quitting()
   end)
 end
 
--- The editor resized: the pane takes half the list's column again (resizing gives the
--- new rows to one of them)
+-- The editor resized: the panel is WIDTH of its columns again (it keeps its width, as
+-- 'winfixwidth' has it, and would take the code's), the pane half the list's column
+-- (resizing gives the new rows to one of them)
 function M.resized()
+  if M.is_open() then
+    pcall(vim.api.nvim_win_set_width, list.win, math.floor(vim.o.columns * WIDTH))
+  end
   if M.is_open() and valid(pane.win) then
     local total = vim.api.nvim_win_get_height(list.win) + vim.api.nvim_win_get_height(pane.win)
     pcall(vim.api.nvim_win_set_height, pane.win, math.max(math.floor(total / 2), 1))
