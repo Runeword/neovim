@@ -63,7 +63,7 @@ LSP setup uses the Neovim 0.11+ `vim.lsp.config`/`vim.lsp.enable` API (not the o
 - `config/lua/{options,mappings,autocmd,filetype}.lua` — core editor config. Leader is `<Space>`.
 - `config/lua/functions.lua` — a module table `M` of custom editor helpers, consumed as `require('functions').<fn>` (mostly from `mappings.lua`).
 - `config/lua/plugins/<category>/*.lua` — plugin specs, grouped into `core`, `minimal`, `completion`, `textobjects`, `search`, `format`, `debug`, `move`, `ui`. `init.lua` imports each group with `{ import = 'plugins.<category>' }`, so **every file in a category dir is auto-loaded** — no central registry to update.
-- `config/lua/myplugins/<name>.nvim/` — first-party plugins (appender, buffer-history, checker, grasp, putter, undotree). Their specs load locally via `dir = vim.fn.stdpath('config') .. '/lua/myplugins/<name>'`, which is why `init.lua` builds the dev `patterns` list from real store subdirs instead of a blanket `.` (a blanket pattern would clobber these `dir=` specs).
+- `config/lua/myplugins/<name>.nvim/` — first-party plugins (appender, buffer-history, checker, filetree, grasp, putter, refs, undotree). Their specs load locally via `dir = vim.fn.stdpath('config') .. '/lua/myplugins/<name>'`, which is why `init.lua` builds the dev `patterns` list from real store subdirs instead of a blanket `.` (a blanket pattern would clobber these `dir=` specs).
 - `config/after/plugin/colors.lua` — highlight overrides applied after plugins load.
 
 ### Plugin spec conventions
