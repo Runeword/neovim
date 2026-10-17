@@ -395,8 +395,8 @@ local function jk_step(dir)
   end
 end
 
--- Public one-line step, exposed for gj/gk (see mappings.lua): a deliberate single line
--- for when you want to opt out of j/k's default 4-line jump. Shares jk_step's hidden-
+-- Public one-line step, exposed for J/K and gj/gk (see mappings.lua): a deliberate single
+-- line for when you want to opt out of j/k's default 4-line jump. Shares jk_step's hidden-
 -- comment skipping, so it stays on the movement flow exactly like the sticky submode.
 function M.jkStep(dir)
   jk_step(dir)
@@ -422,10 +422,10 @@ end
 -- the getcharstr "busy" cursor bug, neovim/neovim#20793).
 local STICKY_KEYS = { 'h', 'j', 'k', 'l' } -- one-step moves while active
 -- Motions that enter the submode (wrapped by armStickyEntry). `ge`/`gj`/`gk` are two-key
--- motions; gj/gk carry their own jkStep mapping (mappings.lua) that armStickyEntry
+-- motions; J/K and gj/gk carry their own jkStep mapping (mappings.lua) that armStickyEntry
 -- captures, so their single-line step survives the entry wrap.
 local STICKY_ENTRY =
-  { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', 'gj', 'gk', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
+  { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', 'J', 'K', 'gj', 'gk', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
 local STICKY_ESC = vim.keycode('<Esc>')
 -- "Rapid burst" gap (ms): the largest pause between two j/k taps for them to count as
 -- mashed rather than deliberate. Used by the sticky submode -- a rapid jj/kk/jk/kj
@@ -900,7 +900,13 @@ function M.wipe_active_buffers()
   if vim.fn.tabpagenr('$') > 1 then
     vim.cmd('tabclose!')
   elseif next_buffer then
-    vim.cmd('silent! only!')
+    -- :only!, the file tree aside (myplugins/filetree.nvim): it stays, its buffer with it
+    local current = vim.api.nvim_get_current_win()
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if win ~= current and vim.bo[vim.api.nvim_win_get_buf(win)].filetype ~= 'filetree' then
+        pcall(vim.api.nvim_win_close, win, true)
+      end
+    end
     vim.api.nvim_win_set_buf(0, next_buffer)
   else
     vim.cmd('quitall!')
