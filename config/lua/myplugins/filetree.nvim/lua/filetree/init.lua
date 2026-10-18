@@ -79,7 +79,6 @@ local closing = false -- the panel is being closed by M.close
 local deleted = 0 -- counts the listed buffers deleted (see closed)
 local deleting = false -- a listed buffer was deleted this turn of the event loop
 local closes -- the windows a command closes, until they're checked (see closed)
-local dragged = false -- the mouse was dragged since it was last pressed (see keymaps)
 
 local function valid(win)
   return win ~= nil and vim.api.nvim_win_is_valid(win)
@@ -568,16 +567,41 @@ local function open_file(path, how)
   end
 end
 
+-- Open or close directory `row`, from the panel
+local function toggle(row)
+  expanded[row.path] = not expanded[row.path] or nil
+  render(vim.api.nvim_get_current_win())
+end
+
+-- A click in the panel opens the file, staying in the panel, or opens/closes the directory,
+-- as soon as it's pressed (see setup), as the bufferline's tabs do: on its release, the
+-- file would show the click's length later. Over an entry: not past the last one
+-- (getmousepos() has the last line there), nor on the panel's separator (line 0, a
+-- resizing). A double click goes to the file (see keymaps).
+function M.clicked()
+  local win, pos = panel_win(), vim.fn.getmousepos()
+  local row = rows[pos.line]
+  if
+    not row
+    or pos.winid ~= win
+    or vim.api.nvim_get_current_win() ~= win
+    or vim.api.nvim_get_mode().mode ~= 'n'
+    or pos.winrow ~= pos.line - vim.fn.line('w0', win) + 1
+  then
+    return
+  elseif row.dir then
+    toggle(row)
+  else
+    open_file(row.path, 'stay')
+  end
+end
+
 local function keymaps(b)
   local function map(lhs, fn, desc)
     vim.keymap.set('n', lhs, fn, { buffer = b, nowait = true, desc = desc })
   end
   local function selected()
     return rows[vim.api.nvim_win_get_cursor(0)[1]]
-  end
-  local function toggle(row)
-    expanded[row.path] = not expanded[row.path] or nil
-    render(vim.api.nvim_get_current_win())
   end
   local function choose(how)
     return function()
@@ -591,26 +615,8 @@ local function keymaps(b)
   end
 
   map('<CR>', choose('go'), 'Open the file, or open/close the directory')
-  -- A click opens the file, staying in the panel, or opens/closes the directory: released
-  -- over an entry, not past the last one (getmousepos() has the last line there), nor after
-  -- a drag (as the panel's resizing). A double click goes to the file: its second press
-  -- comes to the panel, kept by the first.
-  map('<LeftRelease>', function()
-    local pos = vim.fn.getmousepos()
-    local row = rows[pos.line]
-    if
-      dragged
-      or not row
-      or pos.winid ~= vim.api.nvim_get_current_win()
-      or pos.winrow ~= pos.line - vim.fn.line('w0') + 1
-    then
-      return
-    elseif row.dir then
-      toggle(row)
-    else
-      open_file(row.path, 'stay')
-    end
-  end, 'Open the file, staying here, or open/close the directory')
+  -- A double click goes to the file (its first click opened it, see M.clicked): its second
+  -- press comes to the panel, kept by the first
   map('<2-LeftMouse>', function()
     local row = selected()
     if row and not row.dir then
@@ -705,7 +711,7 @@ local function keymaps(b)
   -- This config's keys going to another buffer (the alternate one, the one closed last) do
   -- it in the code window, and so do its <Leader> keys (<Space>), which mostly act on a file
   -- (fzf-lua's pickers, harpoon's files, document symbols)
-  for _, lhs in ipairs({ '<C-Space>', '<C-^>', '<C-t>', '<Space>' }) do
+  for _, lhs in ipairs({ '<C-^>', '<C-t>', '<Space>' }) do
     map(lhs, function()
       local win = main_win()
       if win then
@@ -1126,15 +1132,12 @@ function M.setup()
     update_later() -- (a new file written: shown)
   end)
 
-  -- (a release ending a drag opens nothing, see keymaps)
-  local press, drag = vim.keycode('<LeftMouse>'), vim.keycode('<LeftDrag>')
-  vim.on_key(function(_, typed)
-    if typed == press then
-      dragged = false
-    elseif typed == drag then
-      dragged = true
-    end
-  end, vim.api.nvim_create_namespace('filetree.mouse'))
+  -- A click acts on its press (see M.clicked), once Neovim's own <LeftMouse> has moved there:
+  -- in this map, rather than a callback (vim.on_key + vim.schedule), what entering a buffer
+  -- leaves for later (vim.schedule) comes once the screen shows it
+  vim.keymap.set({ 'n', 'x' }, '<LeftMouse>', '<LeftMouse><Cmd>lua require("filetree").clicked()<CR>', {
+    desc = 'Click (in the file tree: open the entry)',
+  })
 
   vim.api.nvim_set_decoration_provider(ns, {
     on_win = function(_, _, b)
