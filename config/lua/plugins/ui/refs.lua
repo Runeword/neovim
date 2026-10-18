@@ -7,7 +7,7 @@ return {
 
   keys = {
     {
-      'gF',
+      '<leader>r',
       function()
         require('refs').toggle()
       end,
