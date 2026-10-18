@@ -27,6 +27,8 @@ function M.setup()
   vim.api.nvim_set_hl(0, 'RefsMatch', { default = true, link = 'LspReferenceText' })
   -- Over it in the list, the one under the code's cursor, as a search's current match
   vim.api.nvim_set_hl(0, 'RefsCurrent', { default = true, link = 'CurSearch' })
+  -- The count (3/12), on the list's top line and in the code: marked as the current one
+  vim.api.nvim_set_hl(0, 'RefsCount', { default = true, link = 'RefsCurrent' })
 
   -- In the code, whenever the cursor settles: show its symbol in the panel and its
   -- definition in the pane, then (its own questions answered first) ask ahead about the
