@@ -22,8 +22,8 @@ local vim = vim
 -- enough. Its count shows at the end of its line, as on the list's top line (3/12).
 --
 -- The panel is never open empty: it opens with references to show, as <Left>/<Right>
--- land on a symbol, or gF or gf ask for it on one; at start, only if the cursor is on a
--- symbol with references (M.start).
+-- land on a symbol, or <leader>r or gf ask for it on one; at start, only if the cursor
+-- is on a symbol with references (M.start).
 --
 -- The panel's windows hold their buffers ('winfixbuf'), and are never all a tab page
 -- holds: when its last code window closes (:bdelete there), a code window takes its
@@ -55,7 +55,7 @@ local KIND_ICONS = {
 local list = { rows = {}, code = {} }
 local attached = {} -- [buf] = how many servers attached to it so far (see M.attached)
 local start -- the buffer Neovim started in, while the panel waits to know whether to open (see M.start)
-local opening -- the word gF asked for the panel on (see key_of), while the servers answer (see M.toggle)
+local opening -- the word <leader>r asked for the panel on (see key_of), while the servers answer (see M.toggle)
 local ns = vim.api.nvim_create_namespace('refs.panel')
 local current_ns = vim.api.nvim_create_namespace('refs.current') -- (see mark_current)
 local code_ns = vim.api.nvim_create_namespace('refs.code') -- (see mark_code)
@@ -402,11 +402,11 @@ local function ref_pos(ref)
 end
 
 -- The count of the references the list shows: the current one's number `nth` (see
--- mark_current) out of all, as 3/12; -/12 without one. Blue as the files' paths, without
--- a background: on the list's top line (count_bar), and in the code at the end of the
--- current one's line (M.mark).
+-- mark_current) out of all, as 3/12; -/12 without one. Marked as the current one is in
+-- the list (RefsCount, as RefsCurrent): on the list's top line (count_bar), and in the
+-- code at the end of the current one's line (M.mark).
 local function count_chunk(nth)
-  return { ('%s/%d'):format(nth or '-', list.count), 'Directory' }
+  return { ('%s/%d'):format(nth or '-', list.count), 'RefsCount' }
 end
 
 -- Highlight the references the list shows in `buf`, rows `toprow`..`botrow` (0-indexed)
@@ -1364,8 +1364,9 @@ end
 -- item holds come in turn, so the list's cursor stays on it meanwhile. A reference is
 -- gone to where it is now (edits since the list was drawn moved it); one whose text is
 -- gone is passed over. False when the list isn't open here, holds nothing, or this isn't
--- a code window: the arrows then do what they do without it. (While gF waits on the
--- servers to open it on the word under the cursor, true, doing nothing, see M.toggle.)
+-- a code window: the arrows then do what they do without it. (While <leader>r waits on
+-- the servers to open it on the word under the cursor, true, doing nothing, see
+-- M.toggle.)
 function M.go(dir)
   local win = vim.api.nvim_get_current_win()
   if not code_window(win) then
@@ -1497,9 +1498,9 @@ function M.open()
       vim.api.nvim_feedkeys(tostring(d), 'ni', false) -- (before the keys typed after it)
     end, 'Count')
   end
-  -- This config's keys going to another buffer (the next quickfix item, the alternate
-  -- buffer) do it in the code window
-  for _, lhs in ipairs({ '<Tab>', '<S-Tab>', '<C-Space>', '<C-^>' }) do
+  -- This config's keys going to another buffer (the next or previous one, the alternate
+  -- one) do it in the code window
+  for _, lhs in ipairs({ '<Tab>', '<S-Tab>', '<C-^>' }) do
     map(lhs, function()
       local win = main_win()
       if win then
