@@ -41,18 +41,6 @@ local function quickfix_nav(step, wrap)
   end
 end
 
-vim.keymap.set('n', '<Tab>', function()
-  if is_quickfix_open() then
-    quickfix_nav('cnext', 'cfirst')
-  end
-end, { desc = 'Navigate to next quickfix item' })
-
-vim.keymap.set('n', '<S-Tab>', function()
-  if is_quickfix_open() then
-    quickfix_nav('cprevious', 'clast')
-  end
-end, { desc = 'Navigate to previous quickfix item' })
-
 -- vim.keymap.set( 'n', '<S-PageDown>',          '<cmd>cfirst<CR>')
 -- vim.keymap.set( 'n', '<S-PageUp>',          '<cmd>clast<CR>')
 
