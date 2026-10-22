@@ -13,5 +13,12 @@ return {
       end,
       desc = "git log: the shell's gl picker (~/terminal)",
     },
+    {
+      '<leader>gdc',
+      function()
+        require('gl').open('staged')
+      end,
+      desc = "git diff --cached: the shell's gdc picker (~/terminal)",
+    },
   },
 }
