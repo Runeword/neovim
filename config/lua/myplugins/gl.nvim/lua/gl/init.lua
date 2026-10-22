@@ -2,13 +2,14 @@ local vim = vim
 local diff = require('gl.diff')
 
 -- gl, the git log picker of ~/terminal's shell (<Space>gl at an empty prompt), in a split along
--- the bottom. It runs the shell's own function, __git_log in the shell config's
--- functions/git.bash, so its lists look and work as they do there and change with it: pick a
--- commit, then files of it. Its preview, git show through delta, gives way to the code window
+-- the bottom, and gdc, its picker of the staged files, the same way. It runs the shell's own
+-- function (__git_log, or __git_diff staged, in the shell config's functions/git.bash), so its
+-- lists look and work as they do there and change with it: pick a commit, then files of it; or
+-- staged files. Its preview, git show or git diff through delta, gives way to the code window
 -- showing the file under fzf's cursor (in the commits' list, the commit's first file) as the
--- commit leaves it, the commit's change marked in it (gl.diff). Where the shell opens the files
--- picked in a new Neovim ($EDITOR -- <files>), they open here, as buffers, the first in the
--- code window.
+-- commit leaves it, or as staged, the change marked in it (gl.diff). Where the shell opens the
+-- files picked in a new Neovim ($EDITOR -- <files>), they open here, as buffers, the first in
+-- the code window.
 local M = {}
 
 -- zsh -f gives gl the environment of a new shell: xdg.sh, which puts back the
@@ -18,9 +19,10 @@ local M = {}
 -- shell Neovim was started from exports it. Each fzf gl runs gets, last so that they win, the
 -- split's height (not gl's 70%), no preview, and binds that tell Neovim, in OSC 5379
 -- sequences on the terminal, that it starts (with the commit whose files it lists, $commit in
--- __git_log, else nothing) and which row has the cursor, by its second field: a commit's
--- hash, a file's path, or nothing when the search matches none. gl prints `$EDITOR --
--- <files>`, which $EDITOR, a function here, writes to $GL_FILES, absolute and NUL-separated.
+-- __git_log, else nothing) and which row has the cursor, by the field $GL_FIELD names: a
+-- commit's hash, a file's path, or nothing when the search matches none. The function runs
+-- with the script's arguments; it prints `$EDITOR -- <files>`, which $EDITOR, a function here,
+-- writes to $GL_FILES, absolute and NUL-separated.
 local SCRIPT = [[
 for f in xdg.sh variables.sh functions/git.bash; do
   . "$PERMEANCE_TREE/.config/shell/$f"
@@ -28,7 +30,7 @@ done
 fzf() {
   command fzf "$@" --height=100% --preview-window=hidden \
     --bind "start:+execute-silent(printf '\\033]5379;gl;start;%s\\007' ${(q)commit-} >/dev/tty)" \
-    --bind 'focus:+execute-silent(printf "\033]5379;gl;focus;%s\007" {2} >/dev/tty)' \
+    --bind "focus:+execute-silent(printf '\\033]5379;gl;focus;%s\\007' $GL_FIELD >/dev/tty)" \
     --bind 'zero:+execute-silent(printf "\033]5379;gl;focus;\007" >/dev/tty)'
 }
 __gl_edit() {
@@ -36,8 +38,18 @@ __gl_edit() {
   print -rN -- "${@:a}" >"$GL_FILES"
 }
 EDITOR=__gl_edit
-cmd=$(__git_log) && [ -n "$cmd" ] && eval "$cmd"
+cmd=$("$@") && [ -n "$cmd" ] && eval "$cmd"
 ]]
+
+-- The shell's pickers gl runs, by name: the function and its arguments, the field of a row that
+-- names it (in __git_log's lists, the second: a commit's hash, a file's path; __git_diff's rows
+-- are paths), the revision whose files the list shows from the start, if any (gdc's: the
+-- index, the staged files), and whether its files are shown as they are in the work tree, to
+-- edit with the change marked on them (gl.diff), rather than as a version of theirs (gl's)
+local TOOLS = {
+  log = { cmd = { '__git_log' }, field = '{2}' },
+  staged = { cmd = { '__git_diff', 'staged' }, field = '{}', rev = diff.INDEX, edit = true },
+}
 
 -- The code window's options a change sets (gl.diff: its winbar), given back with it
 local SAVED = { 'winbar' }
@@ -164,6 +176,7 @@ local function give_back(s)
   if not (g and valid(g.win) and vim.b[vim.api.nvim_win_get_buf(g.win)].gl) then
     return
   end
+  local shown = vim.api.nvim_win_get_buf(g.win)
   if vim.api.nvim_buf_is_valid(g.buf) then
     swap(g.win, g.buf)
     vim.api.nvim_win_call(g.win, function()
@@ -175,10 +188,12 @@ local function give_back(s)
   for opt, value in pairs(g.opts) do
     vim.api.nvim_set_option_value(opt, value, { win = g.win, scope = 'local' })
   end
+  -- (a file of the work tree marked in place: given back, kept if it's the one <CR> opens)
+  diff.release(shown, s.jump ~= nil and vim.fn.bufnr(s.jump.path) == shown)
 end
 
--- From the diff, the file at the cursor's line (the work tree's, as delta's links open it),
--- closing gl
+-- From the diff, the file at the cursor's line (the work tree's, as delta's links open it; in
+-- gdc, the file itself), closing gl
 local function jump(s)
   local path = s.file and s.file.new
   if not (path and valid(s.view) and vim.uv.fs_stat(s.root .. '/' .. path)) then
@@ -189,10 +204,10 @@ local function jump(s)
   vim.fn.jobstop(s.job)
 end
 
--- A version's buffer: gl's (gl.diff makes one each time), q closes gl, <CR> opens the file,
--- <C-j>/<C-k> take fzf's cursor to its next/previous row, the diff following it while the
--- cursor stays here, for j and k (join and treesj have nothing to do here; visual and
--- operator-pending <C-j>/<C-k> keep their jumps)
+-- The diff's buffer (a version's, gl.diff makes one each time; in gdc, the file's own, while
+-- it's shown): q closes gl, <CR> opens the file, <C-j>/<C-k> take fzf's cursor to its
+-- next/previous row, the diff following it while the cursor stays here, for j and k (join and
+-- treesj wait meanwhile; visual and operator-pending <C-j>/<C-k> keep their jumps)
 local function keys(s, buf)
   vim.b[buf].gl = true
   vim.keymap.set('n', 'q', function()
@@ -210,14 +225,14 @@ local function keys(s, buf)
   end
 end
 
--- The commit's files, once per commit
-local function files(s, sha, cb)
-  if s.files[sha] then
-    return cb(s.files[sha])
+-- The files of the revision (a commit, the index), once per revision
+local function files(s, rev, cb)
+  if s.files[rev] then
+    return cb(s.files[rev])
   end
-  diff.files(s.dir, sha, function(list)
+  diff.files(s.dir, rev, function(list)
     vim.schedule(function()
-      s.files[sha] = list
+      s.files[rev] = list
       cb(list)
     end)
   end)
@@ -250,25 +265,26 @@ local function pump(s)
       s.shown = want.key
       local w = diff_window(s)
       if w then
-        diff.show(w, want.sha, file, old, new, extra, function(buf)
+        local path = s.tool.edit and file and file.new and s.root .. '/' .. file.new or nil
+        diff.show(w, want.rev, file, old, new, extra, function(buf)
           keys(s, buf)
-        end)
+        end, path)
         s.file = file
       end
     end
     pump(s)
   end
-  if want.sha == '' then -- no row: the search matches none
+  if want.rev == '' then -- no row: the search matches none
     return show()
   end
-  files(s, want.sha, function(list)
+  files(s, want.rev, function(list)
     local file = pick(list, want.path)
     if not file or s.want ~= want then
       return show(file)
     end
     -- (in the commits' list, a commit's first file: says of how many)
     local extra = not want.path and #list > 1 and ('  · 1 of %d files'):format(#list) or nil
-    diff.versions(s.dir, want.sha, file, function(old, new)
+    diff.versions(s.dir, want.rev, file, function(old, new)
       vim.schedule(function()
         show(file, old, new, extra)
       end)
@@ -276,21 +292,22 @@ local function pump(s)
   end)
 end
 
-local function ask(s, sha, path)
-  s.want = { key = sha .. '\0' .. (path or ''), sha = sha, path = path }
+local function ask(s, rev, path)
+  s.want = { key = rev .. '\0' .. (path or ''), rev = rev, path = path }
   pump(s)
 end
 
 -- fzf's word, in its OSC 5379 sequences: that it starts, listing the files of a commit (whose
 -- hash comes with it, else the commit under the cursor when the commits' list closed) or the
--- commits; which row has the cursor (nothing, for none)
+-- commits; which row has the cursor (nothing, for none). A list of the index's files (gdc's)
+-- stays that.
 local function heard(s, sequence)
   local kind, arg = sequence:match('^\27%]5379;gl;(%a+);(.*)')
-  if kind == 'start' then
-    s.commit = arg ~= '' and arg or s.started and s.focused or nil
+  if kind == 'start' and not s.tool.rev then
+    s.rev = arg ~= '' and arg or s.started and s.focused or nil
     s.started = true
-  elseif kind == 'focus' and s.commit then
-    ask(s, arg == '' and '' or s.commit, arg ~= '' and arg or nil)
+  elseif kind == 'focus' and s.rev then
+    ask(s, arg == '' and '' or s.rev, arg ~= '' and arg or nil)
   elseif kind == 'focus' then
     s.focused = arg
     ask(s, arg)
@@ -313,8 +330,8 @@ local function scroll(s, by)
   end)
 end
 
--- gl in its split, for the session s (its directory and repository root, its files' cache, the
--- references panel to open again after)
+-- gl in its split, for the session s (its picker, its directory and repository root, its files'
+-- cache, the references panel to open again after)
 local function launch(s)
   s.origin = vim.api.nvim_get_current_win()
   s.buf = vim.api.nvim_create_buf(false, true)
@@ -415,10 +432,10 @@ local function launch(s)
       s.refs.open()
     end
   end
-  ok, s.job = pcall(vim.fn.jobstart, { 'zsh', '-f', '-c', SCRIPT }, {
+  ok, s.job = pcall(vim.fn.jobstart, { 'zsh', '-f', '-c', SCRIPT, 'gl', unpack(s.tool.cmd) }, {
     term = true,
     cwd = s.dir,
-    env = { GL_FILES = file },
+    env = { GL_FILES = file, GL_FIELD = s.tool.field },
     on_exit = exited,
   })
   if not ok or s.job <= 0 then
@@ -429,7 +446,9 @@ local function launch(s)
   vim.cmd.startinsert()
 end
 
-function M.open()
+-- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's
+function M.open(name)
+  local tool = TOOLS[name or 'log']
   if session then -- (one at a time) back to it
     if valid(session.win) then
       vim.api.nvim_set_current_win(session.win)
@@ -450,7 +469,7 @@ function M.open()
     return
   end
 
-  local s = { dir = dir, root = vim.trim(top.stdout), files = {} }
+  local s = { dir = dir, root = vim.trim(top.stdout), files = {}, tool = tool, rev = tool.rev }
   -- The references panel (myplugins/refs.nvim) gives way: closed while gl runs, the diff having
   -- its room, and open again after. gl then starts once the file tree, which steps aside for
   -- that panel, is back (it comes back on the next tick, after the panel's WinClosed): gl's
