@@ -1,13 +1,13 @@
 local vim = vim
 
--- A file's change in a commit as a one-way diff, in a buffer of the file itself, all of it: the
--- file as the commit leaves it (one the commit deletes, as it was), with its filetype, so its
--- highlighting. The lines the commit added are on the added-line background, the ones it removed
--- come back as virtual lines where they were, highlighted as treesitter would in the file before
--- the commit, on the deleted-line background, and the part of a changed line that changed is on
--- a brighter one. Code the commit moves is on purple and blue ones instead, as git's
--- diff.colorMoved marks it and delta paints it in the shell. Each file is a new buffer, wiped
--- once it leaves its window.
+-- A file's change in a commit (or staged, in the index) as a one-way diff, in a buffer of the
+-- file itself, all of it: the file as the commit leaves it (one the commit deletes, as it was),
+-- with its filetype, so its highlighting. The lines the commit added are on the added-line
+-- background, the ones it removed come back as virtual lines where they were, highlighted as
+-- treesitter would in the file before the commit, on the deleted-line background, and the part
+-- of a changed line that changed is on a brighter one. Code the commit moves is on purple and
+-- blue ones instead, as git's diff.colorMoved marks it and delta paints it in the shell. Each
+-- file is a new buffer, wiped once it leaves its window.
 local M = {}
 
 local ns = vim.api.nvim_create_namespace('gl.diff')
@@ -48,12 +48,16 @@ local MOVED_HL = {
 -- By buffer: the rows of its changes
 local shown = {}
 
--- The commit's files, as git show lists them: with renames and copies as git's config finds
--- them, against the first parent for a merge (as gl's list counts its change). Each is
--- { status = A, C, D, M, R or T, old = its path before (nil if added), new = after (nil if
--- deleted) }.
-function M.files(dir, sha, cb)
-  local cmd = { 'git', 'show', '--format=', '--name-status', '-z', '--diff-merges=first-parent', sha }
+-- The index, as a revision: its change is the staged one, from HEAD to it
+M.INDEX = ':'
+
+-- The files a commit changes, as git show lists them: with renames and copies as git's config
+-- finds them, against the first parent for a merge (as gl's list counts its change); the
+-- index's, the staged ones, as git diff --cached lists them. Each is { status = A, C, D, M, R,
+-- T or U (unmerged), old = its path before (nil if added), new = after (nil if deleted) }.
+function M.files(dir, rev, cb)
+  local cmd = rev == M.INDEX and { 'git', 'diff', '--cached', '--name-status', '-z' }
+    or { 'git', 'show', '--format=', '--name-status', '-z', '--diff-merges=first-parent', rev }
   vim.system(cmd, { cwd = dir }, function(r)
     local list, f, i = {}, vim.split(r.code == 0 and r.stdout or '', '\0', { plain = true }), 1
     while f[i + 1] do
@@ -71,11 +75,12 @@ function M.files(dir, sha, cb)
   end)
 end
 
--- The file's text before the commit and after it (nil where it isn't there)
-function M.versions(dir, sha, file, cb)
+-- The file's text before the change and after it (nil where it isn't there): in the commit's
+-- parent and the commit, or in HEAD and the index
+function M.versions(dir, rev, file, cb)
   local specs = {}
-  specs.old = file.old and sha .. '^:' .. file.old
-  specs.new = file.new and sha .. ':' .. file.new
+  specs.old = file.old and (rev == M.INDEX and 'HEAD' or rev .. '^') .. ':' .. file.old
+  specs.new = file.new and (rev == M.INDEX and '' or rev) .. ':' .. file.new
   local text, left = {}, vim.tbl_count(specs)
   if left == 0 then
     return cb(nil, nil)
@@ -386,14 +391,15 @@ local function virtual(text, parts, tabstop, syn, bg)
   return chunks
 end
 
--- Marks the change from old (of the filetype) to new in the buffer (holding new); returns the
--- rows of its changes
-local function mark(buf, old, new, ft)
+-- Marks the change from old (of the filetype) to new in the buffer (holding new), with space
+-- not where only the amount of white space changes; returns the rows of its changes
+local function mark(buf, old, new, ft, space)
   local rows = {}
   local hunks = vim.text.diff(joined(old), joined(new), {
     result_type = 'indices',
     algorithm = 'histogram',
     indent_heuristic = true,
+    ignore_whitespace_change = space,
   })
   local removed = {}
   for _, h in ipairs(hunks) do
@@ -459,42 +465,132 @@ local function mark(buf, old, new, ft)
   return rows
 end
 
+-- A buffer's own keys in normal mode, by lhs
+local function keymaps(buf)
+  local t = {}
+  for _, m in ipairs(vim.api.nvim_buf_get_keymap(buf, 'n')) do
+    t[m.lhs] = m
+  end
+  return t
+end
+
+-- Gives back a file of the work tree marked in place (see show): its marks and gl's keys gone,
+-- its own back; then unloaded if it was loaded for it and hasn't changed since, as a preview
+-- would be, else, changed (or keep: to open it), in the buffer list, as a file opened, the way
+-- VS Code keeps a preview once edited
+function M.release(buf, keep)
+  local m = shown[buf]
+  if not (m and m.real) then
+    return
+  end
+  shown[buf] = nil
+  local r = m.real
+  r.timer:stop()
+  r.timer:close()
+  for _, id in ipairs(r.autocmds) do
+    pcall(vim.api.nvim_del_autocmd, id)
+  end
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  for _, lhs in ipairs(r.added) do
+    pcall(vim.keymap.del, 'n', lhs, { buffer = buf })
+  end
+  vim.api.nvim_buf_call(buf, function()
+    for _, map in ipairs(r.saved) do
+      vim.fn.mapset('n', false, map)
+    end
+  end)
+  vim.b[buf].gl = nil
+  if keep or vim.bo[buf].modified or vim.api.nvim_buf_get_changedtick(buf) ~= r.tick then
+    vim.bo[buf].buflisted = true
+  elseif r.fresh and #vim.fn.win_findbuf(buf) == 0 then
+    pcall(vim.api.nvim_buf_delete, buf, {})
+  end
+end
+
 -- Shows the file's change in the window (no file: nothing, as for a search matching none), the
--- cursor on its first change, under a winbar with the revision and path, what else there is to
--- say about it and extra. map(buf) sets the buffer's keys; ]c and [c go to its next and
--- previous changes.
-function M.show(win, sha, file, old_text, new_text, extra, map)
+-- cursor on its first change, under a winbar with the revision (staged, for the index) and path,
+-- what else there is to say about it and extra. map(buf) sets the buffer's keys; ]c and [c go to
+-- its next and previous changes. The index's leaves out changes in the amount of white space,
+-- as the shell's gdc does (git diff --ignore-space-change).
+-- With path, the file in the work tree (gdc's), the change goes on the file itself, its own
+-- buffer, to edit with the change in view: from the change's start (old) to the buffer as it is,
+-- marked again as it changes, with the staged changes the unstaged ones after them. The buffer
+-- stays out of the buffer list until edited, and is given back when it leaves (M.release).
+-- Else, or with no such file (deleted, binary, too large), it's a new buffer of the version,
+-- wiped once it leaves its window.
+function M.show(win, rev, file, old_text, new_text, extra, map, path)
+  local staged = rev == M.INDEX
+  local label = staged and 'staged' or rev
   local f = file or {}
   local deleted = f.old and not f.new
   local old, why_old = lines(old_text)
   local new, why_new = lines(new_text)
-  local body = deleted and old or new
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = 'wipe'
-  vim.bo[buf].undolevels = -1
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, body)
-  vim.bo[buf].modified = false
-  vim.bo[buf].modifiable = false
-  map(buf)
-  for key, dir in pairs({ [']c'] = 1, ['[c'] = -1 }) do
-    vim.keymap.set('n', key, function()
-      M.step(dir)
-    end, { buffer = buf, desc = dir > 0 and 'gl: next change' or 'gl: previous change' })
+  local why = f.status == 'U' and 'unmerged' or why_new or why_old
+  local name = f.new or f.old
+  local stat = path and f.new and not why and vim.uv.fs_lstat(path)
+  local buf, real
+  if stat and stat.type == 'file' then
+    buf = vim.fn.bufadd(path)
+    real = shown[buf] and shown[buf].real
+      or { fresh = not vim.api.nvim_buf_is_loaded(buf), autocmds = {}, timer = vim.uv.new_timer() }
+    vim.fn.bufload(buf)
+    real.tick = real.tick or vim.api.nvim_buf_get_changedtick(buf)
+  else
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = 'wipe'
+    vim.bo[buf].undolevels = -1
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, deleted and old or new)
+    vim.bo[buf].modified = false
+    vim.bo[buf].modifiable = false
   end
-  vim.api.nvim_create_autocmd('BufWipeout', {
-    group = group,
-    buffer = buf,
-    callback = function()
-      shown[buf] = nil
-    end,
-  })
-  vim.api.nvim_win_call(win, function()
-    vim.cmd('noautocmd keepalt keepjumps buffer ' .. buf)
-  end)
-  local path = f.new or f.old
-  local ft = path and vim.filetype.match({ filename = path, contents = body })
-  if path then
-    pcall(vim.api.nvim_buf_set_name, buf, ('gl://%s%s/%s'):format(sha, deleted and '^' or '', path))
+
+  if not (real and shown[buf]) then -- (keys, once per buffer)
+    local before = keymaps(buf)
+    map(buf)
+    for key, dir in pairs({ [']c'] = 1, ['[c'] = -1 }) do
+      vim.keymap.set('n', key, function()
+        M.step(dir)
+      end, { buffer = buf, desc = dir > 0 and 'gl: next change' or 'gl: previous change' })
+    end
+    if real then -- (gl's, to take off, and the buffer's own they hide, to put back)
+      real.added, real.saved = {}, {}
+      for lhs, m in pairs(keymaps(buf)) do
+        local o = before[lhs]
+        if not o or o.callback ~= m.callback or o.rhs ~= m.rhs then
+          real.added[#real.added + 1] = lhs
+          if o then
+            real.saved[#real.saved + 1] = o
+          end
+        end
+      end
+    end
+  end
+  if not real then
+    vim.api.nvim_create_autocmd('BufWipeout', {
+      group = group,
+      buffer = buf,
+      callback = function()
+        shown[buf] = nil
+      end,
+    })
+  end
+
+  local prev = vim.api.nvim_win_get_buf(win)
+  if prev ~= buf then
+    local listed = vim.bo[buf].buflisted
+    vim.api.nvim_win_call(win, function()
+      vim.cmd('noautocmd keepalt keepjumps buffer ' .. buf)
+    end)
+    vim.bo[buf].buflisted = listed
+    M.release(prev) -- (a file marked in place before: given back)
+  end
+  local body = deleted and old or new
+  local ft = real and vim.bo[buf].filetype or name and vim.filetype.match({ filename = name, contents = body })
+  if name and not real then
+    pcall(vim.api.nvim_buf_set_name, buf, ('gl://%s%s/%s'):format(label, deleted and not staged and '^' or '', name))
     -- (FileType in the window: the treesitter hook highlights the rows it shows)
     if ft then
       vim.api.nvim_win_call(win, function()
@@ -503,23 +599,79 @@ function M.show(win, sha, file, old_text, new_text, extra, map)
     end
   end
 
-  local why = why_new or why_old
+  -- (the old version's filetype: a renamed file's may differ)
+  local old_ft = f.old and vim.filetype.match({ filename = f.old, contents = old }) or ft
   local rows = { 1 } -- (an added or deleted file: all of it)
-  if not file or why then
+  if real then
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    rows = mark(buf, old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), old_ft, staged)
+  elseif not file or why then
     rows = {}
   elseif deleted or not f.old then
     for r = 1, #body do
       line(buf, r, deleted and 'GlDiffDelete' or 'GlDiffAdd')
     end
   else
-    -- (the old version's filetype: a renamed file's may differ)
-    rows = mark(buf, old, new, vim.filetype.match({ filename = f.old, contents = old }) or ft)
+    rows = mark(buf, old, new, old_ft, staged)
   end
-  shown[buf] = { rows = rows }
 
   local say = why or not f.old and 'new file' or deleted and 'deleted' or f.old ~= f.new and 'renamed from ' .. f.old
-  local label = file and (' %s  %s%s%s'):format(sha, path, say and '  (' .. say .. ')' or '', extra or '') or ''
-  vim.api.nvim_set_option_value('winbar', (label:gsub('%%', '%%%%')), { win = win, scope = 'local' })
+  -- The winbar, with a file marked in place: whether it holds more than is staged
+  local function bar(now)
+    local notes = { say or nil }
+    notes[#notes + 1] = now and not vim.deep_equal(now, new) and 'with unstaged changes' or nil
+    local note = #notes > 0 and '  (' .. table.concat(notes, ', ') .. ')' or ''
+    local text = file and (' %s  %s%s%s'):format(label, name, note, extra or '') or ''
+    vim.api.nvim_set_option_value('winbar', (text:gsub('%%', '%%%%')), { win = win, scope = 'local' })
+  end
+  bar(real and vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  shown[buf] = { rows = rows, real = real }
+
+  -- Marked again a moment after each change (as gitsigns does), the winbar too while the window
+  -- shows it
+  if real and #real.autocmds == 0 then
+    local function again()
+      local m = shown[buf]
+      if not (m and vim.api.nvim_buf_is_valid(buf)) then
+        return
+      end
+      local now = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+      m.rows = mark(buf, old, now, old_ft, staged)
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+        bar(now)
+      end
+    end
+    real.autocmds = {
+      vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
+        group = group,
+        buffer = buf,
+        callback = function()
+          real.timer:stop()
+          real.timer:start(150, 0, vim.schedule_wrap(again))
+        end,
+      }),
+      -- (taken from its window some other way than by gl.diff, or wiped: given back)
+      vim.api.nvim_create_autocmd('BufWinLeave', {
+        group = group,
+        buffer = buf,
+        callback = function()
+          vim.schedule(function()
+            if #vim.fn.win_findbuf(buf) == 0 then
+              M.release(buf)
+            end
+          end)
+        end,
+      }),
+      vim.api.nvim_create_autocmd('BufWipeout', {
+        group = group,
+        buffer = buf,
+        callback = function()
+          M.release(buf)
+        end,
+      }),
+    }
+  end
 
   vim.api.nvim_win_call(win, function()
     local row = rows[1] or 1
