@@ -40,6 +40,40 @@ highlights()
 local group = vim.api.nvim_create_augroup('gl.diff', {})
 vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = highlights })
 
+-- The diff's window shows no background but the diff's: neither the treesitter object's under
+-- the cursor (myplugins/grasp.nvim), nor the search's, whose matches are underlined instead
+local quiet = vim.api.nvim_create_namespace('gl.diff.quiet')
+for name, attrs in pairs({
+  TreesitterObjectHighlight = {},
+  Search = { underline = true },
+  CurSearch = { underline = true, bold = true },
+  IncSearch = { underline = true, bold = true },
+}) do
+  vim.api.nvim_set_hl(quiet, name, attrs)
+end
+
+-- By window showing a diff: the highlight namespace it had
+local quieted = {}
+vim.api.nvim_create_autocmd('WinClosed', {
+  group = group,
+  callback = function(args)
+    quieted[tonumber(args.match)] = nil
+  end,
+})
+
+-- The window's backgrounds the diff's alone (on), else its own again
+function M.quiet(win, on)
+  if on and not quieted[win] then
+    quieted[win] = vim.api.nvim_get_hl_ns({ winid = win })
+    vim.api.nvim_win_set_hl_ns(win, quiet)
+  elseif not on and quieted[win] then
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_set_hl_ns(win, math.max(quieted[win], 0))
+    end
+    quieted[win] = nil
+  end
+end
+
 -- Moved lines' groups, by side and colour (see moves)
 local MOVED_HL = {
   old = { 'GlDiffDeleteMoved', 'GlDiffDeleteMovedAlt' },
@@ -605,6 +639,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
   if prev ~= buf then
     M.release(prev) -- (a file marked in place before: given back)
   end
+  M.quiet(win, true)
   local body = deleted and old or new
   local ft = real and vim.bo[buf].filetype or name and vim.filetype.match({ filename = name, contents = body })
   if name and not real then
