@@ -30,14 +30,14 @@ return {
       function()
         require('gl').open()
       end,
-      desc = "git log: the shell's gl picker (~/terminal)",
+      desc = "git log: the shell's gl picker (~/terminal), on/off",
     },
     {
       '<leader>gdc',
       function()
         require('gl').open('staged')
       end,
-      desc = "git diff --cached: the shell's gdc picker (~/terminal)",
+      desc = "git diff --cached: the shell's gdc picker (~/terminal), on/off",
     },
   },
 }
