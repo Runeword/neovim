@@ -7,7 +7,8 @@ local vim = vim
 -- treesitter would in the file before the commit, on the deleted-line background, and the part
 -- of a changed line that changed is on a brighter one. Code the commit moves is on purple and
 -- blue ones instead, as git's diff.colorMoved marks it and delta paints it in the shell. Each
--- file is a new buffer, wiped once it leaves its window.
+-- file is a new buffer, wiped once it leaves its window, but a staged one in the work tree
+-- (gdc's): that's the file itself, opened (see show).
 local M = {}
 
 local ns = vim.api.nvim_create_namespace('gl.diff')
@@ -475,10 +476,8 @@ local function keymaps(buf)
 end
 
 -- Gives back a file of the work tree marked in place (see show): its marks and gl's keys gone,
--- its own back; then unloaded if it was loaded for it and hasn't changed since, as a preview
--- would be, else, changed (or keep: to open it), in the buffer list, as a file opened, the way
--- VS Code keeps a preview once edited
-function M.release(buf, keep)
+-- its own back. It stays open, a buffer like the others.
+function M.release(buf)
   local m = shown[buf]
   if not (m and m.real) then
     return
@@ -503,11 +502,6 @@ function M.release(buf, keep)
     end
   end)
   vim.b[buf].gl = nil
-  if keep or vim.bo[buf].modified or vim.api.nvim_buf_get_changedtick(buf) ~= r.tick then
-    vim.bo[buf].buflisted = true
-  elseif r.fresh and #vim.fn.win_findbuf(buf) == 0 then
-    pcall(vim.api.nvim_buf_delete, buf, {})
-  end
 end
 
 -- Shows the file's change in the window (no file: nothing, as for a search matching none), the
@@ -517,8 +511,10 @@ end
 -- as the shell's gdc does (git diff --ignore-space-change).
 -- With path, the file in the work tree (gdc's), the change goes on the file itself, its own
 -- buffer, to edit with the change in view: from the change's start (old) to the buffer as it is,
--- marked again as it changes, with the staged changes the unstaged ones after them. The buffer
--- stays out of the buffer list until edited, and is given back when it leaves (M.release).
+-- marked again as it changes, with the staged changes the unstaged ones after them. The file
+-- opens as :edit opens it, in the buffer list (a tab in the bufferline, which names it: no
+-- winbar), and stays open; once it leaves the window, its marks and gl's keys go (M.release).
+-- Returns whether it opened the file.
 -- Else, or with no such file (deleted, binary, too large), it's a new buffer of the version,
 -- wiped once it leaves its window.
 function M.show(win, rev, file, old_text, new_text, extra, map, path)
@@ -534,10 +530,8 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path)
   local buf, real
   if stat and stat.type == 'file' then
     buf = vim.fn.bufadd(path)
-    real = shown[buf] and shown[buf].real
-      or { fresh = not vim.api.nvim_buf_is_loaded(buf), autocmds = {}, timer = vim.uv.new_timer() }
+    real = shown[buf] and shown[buf].real or { autocmds = {}, timer = vim.uv.new_timer() }
     vim.fn.bufload(buf)
-    real.tick = real.tick or vim.api.nvim_buf_get_changedtick(buf)
   else
     buf = vim.api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = 'wipe'
@@ -579,12 +573,31 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path)
   end
 
   local prev = vim.api.nvim_win_get_buf(win)
-  if prev ~= buf then
+  if prev ~= buf and real then
+    -- (the file, opened: its autocommands run, the file tree and the bufferline follow it, and
+    -- its window options are back, the winbar the window had for it, not a version's)
+    local ok, err = pcall(vim.api.nvim_win_call, win, function()
+      vim.cmd('buffer ' .. buf)
+    end)
+    if not ok then
+      vim.notify('gl: ' .. err, vim.log.levels.ERROR)
+    end
+    if vim.api.nvim_win_get_buf(win) ~= buf then -- (not opened: the window shows what it did)
+      shown[buf] = shown[buf] or { rows = {}, real = real }
+      M.release(buf)
+      return false
+    end
+  elseif prev ~= buf then
     local listed = vim.bo[buf].buflisted
     vim.api.nvim_win_call(win, function()
       vim.cmd('noautocmd keepalt keepjumps buffer ' .. buf)
     end)
     vim.bo[buf].buflisted = listed
+  end
+  if real then -- (in the buffer list, a tab in the bufferline, even if the window showed it already)
+    vim.bo[buf].buflisted = true
+  end
+  if prev ~= buf then
     M.release(prev) -- (a file marked in place before: given back)
   end
   local body = deleted and old or new
@@ -615,32 +628,22 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path)
     rows = mark(buf, old, new, old_ft, staged)
   end
 
-  local say = why or not f.old and 'new file' or deleted and 'deleted' or f.old ~= f.new and 'renamed from ' .. f.old
-  -- The winbar, with a file marked in place: whether it holds more than is staged
-  local function bar(now)
-    local notes = { say or nil }
-    notes[#notes + 1] = now and not vim.deep_equal(now, new) and 'with unstaged changes' or nil
-    local note = #notes > 0 and '  (' .. table.concat(notes, ', ') .. ')' or ''
-    local text = file and (' %s  %s%s%s'):format(label, name, note, extra or '') or ''
+  if not real then
+    local say = why or not f.old and 'new file' or deleted and 'deleted' or f.old ~= f.new and 'renamed from ' .. f.old
+    local text = file and (' %s  %s%s%s'):format(label, name, say and '  (' .. say .. ')' or '', extra or '') or ''
     vim.api.nvim_set_option_value('winbar', (text:gsub('%%', '%%%%')), { win = win, scope = 'local' })
   end
-  bar(real and vim.api.nvim_buf_get_lines(buf, 0, -1, false))
   shown[buf] = { rows = rows, real = real }
 
-  -- Marked again a moment after each change (as gitsigns does), the winbar too while the window
-  -- shows it
+  -- Marked again a moment after each change (as gitsigns does)
   if real and #real.autocmds == 0 then
     local function again()
       local m = shown[buf]
       if not (m and vim.api.nvim_buf_is_valid(buf)) then
         return
       end
-      local now = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
       vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-      m.rows = mark(buf, old, now, old_ft, staged)
-      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
-        bar(now)
-      end
+      m.rows = mark(buf, old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), old_ft, staged)
     end
     real.autocmds = {
       vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
@@ -684,6 +687,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path)
       end
     end
   end)
+  return real ~= nil
 end
 
 -- To the next (dir 1) or previous (-1) change
