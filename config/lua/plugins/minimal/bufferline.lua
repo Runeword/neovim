@@ -96,16 +96,18 @@ return {
           },
         },
         -- A click on a buffer from a panel holding its own ('winfixbuf': the file tree, the
-        -- references panel) shows it in a code window, the one left last if it's one
+        -- references panel, gl's list) shows it in a code window (a file's, or gl's diff of
+        -- one: myplugins/gl.nvim), the one left last if it's one
         left_mouse_command = function(buffer)
           if vim.wo.winfixbuf then
             local wins = vim.api.nvim_tabpage_list_wins(0)
             table.insert(wins, 1, vim.fn.win_getid(vim.fn.winnr('#')))
             for _, win in ipairs(wins) do
+              local b = win ~= 0 and vim.api.nvim_win_get_buf(win)
               if
-                win ~= 0
+                b
                 and not vim.wo[win].winfixbuf
-                and vim.bo[vim.api.nvim_win_get_buf(win)].buftype == ''
+                and (vim.bo[b].buftype == '' or vim.b[b].gl)
                 and vim.api.nvim_win_get_config(win).relative == ''
               then
                 vim.api.nvim_set_current_win(win)
