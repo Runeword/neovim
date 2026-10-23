@@ -181,6 +181,9 @@ local function give_back(s)
     pcall(vim.api.nvim_win_close, s.made, true)
   end
   local g = s.give
+  if g and valid(g.win) then
+    diff.quiet(g.win, false) -- (its own highlights back)
+  end
   if not (g and valid(g.win) and vim.b[vim.api.nvim_win_get_buf(g.win)].gl) then
     return
   end
@@ -300,6 +303,13 @@ local function pump(s)
         end, path, want.follow ~= nil)
         s.last = opened and vim.api.nvim_win_get_buf(w) or s.last -- (the file gdc opened last)
         s.file = file
+        -- (gdc's first file: the cursor goes to it, from where gdc started, if not there already)
+        if s.tool.edit and file and not s.landed then
+          s.landed = true
+          if vim.api.nvim_get_current_win() == s.origin and w ~= s.origin then
+            vim.api.nvim_set_current_win(w)
+          end
+        end
       end
     end
     pump(s)
@@ -388,15 +398,9 @@ local function in_repo(s, b)
   return file and root and file:sub(1, #root + 1) == root .. '/' and file:sub(#root + 2) or nil
 end
 
--- A buffer shown in the code window (BufWinEnter) another way than by gl, gdc's (the file tree,
--- the bufferline, :edit): what gl was about to show there doesn't come, the buffer stays; one of
--- the staged files gets its change marked, as if picked in the list, whose cursor goes to its
--- row
+-- In gdc, a staged file shown in the code window another way than by gl (see launch) gets its
+-- change marked, as if picked in the list, whose cursor goes to its row
 local function follow(s, b)
-  if vim.api.nvim_get_current_win() ~= s.view or vim.b[b].gl then
-    return
-  end
-  s.want = nil
   local path = in_repo(s, b)
   if not path then
     return
@@ -453,12 +457,15 @@ local function scroll(s, by)
 end
 
 -- gl in its split, for the session s (its picker, its directory and repository root, its files'
--- cache, the references panel to open again after)
+-- cache, the references panel to open again after), the cursor in its list; but gdc's stays on
+-- the code, where its files open to edit (the first: see pump), the list below (<C-Down>), moved
+-- from there with <C-j>/<C-k>
 local function launch(s)
   s.origin = vim.api.nvim_get_current_win()
   s.buf = vim.api.nvim_create_buf(false, true)
   vim.bo[s.buf].bufhidden = 'wipe'
-  local ok, win = pcall(vim.api.nvim_open_win, s.buf, true, { split = 'below', win = -1, height = height() })
+  local enter = not s.tool.edit
+  local ok, win = pcall(vim.api.nvim_open_win, s.buf, enter, { split = 'below', win = -1, height = height() })
   if not ok then -- (no room)
     vim.api.nvim_buf_delete(s.buf, { force = true })
     vim.notify('gl: ' .. win, vim.log.levels.ERROR)
@@ -519,14 +526,23 @@ local function launch(s)
   })
   -- Back in gl's window, back to fzf
   vim.api.nvim_create_autocmd('BufEnter', { group = group, buffer = s.buf, command = 'startinsert' })
+  -- A buffer shown in the code window another way than by gl (the file tree, the bufferline,
+  -- :edit) stays: what gl was about to show there doesn't come, what it showed is gone (asked
+  -- again, it shows again), and the window has its own highlights back; in gdc, it's followed
+  vim.api.nvim_create_autocmd('BufWinEnter', {
+    group = group,
+    callback = function(ev)
+      if vim.api.nvim_get_current_win() == s.view and not vim.b[ev.buf].gl then
+        s.want, s.shown = nil, nil
+        diff.quiet(s.view, false)
+        if s.tool.edit then
+          follow(s, ev.buf)
+        end
+      end
+    end,
+  })
   if s.tool.edit then
     s.sock = vim.fn.tempname() .. '.sock' -- (fzf's: a socket's name must end so)
-    vim.api.nvim_create_autocmd('BufWinEnter', {
-      group = group,
-      callback = function(ev)
-        follow(s, ev.buf)
-      end,
-    })
   end
   vim.api.nvim_create_autocmd('VimResized', {
     group = group,
@@ -563,18 +579,26 @@ local function launch(s)
       s.refs.open()
     end
   end
-  ok, s.job = pcall(vim.fn.jobstart, { 'zsh', '-f', '-c', SCRIPT, 'gl', unpack(s.tool.cmd) }, {
-    term = true,
-    cwd = s.dir,
-    env = { GL_FILES = file, GL_FIELD = s.tool.field, GL_SOCK = s.sock },
-    on_exit = exited,
-  })
+  ok, s.job = pcall(vim.api.nvim_win_call, s.win, function()
+    local job = vim.fn.jobstart({ 'zsh', '-f', '-c', SCRIPT, 'gl', unpack(s.tool.cmd) }, {
+      term = true,
+      cwd = s.dir,
+      env = { GL_FILES = file, GL_FIELD = s.tool.field, GL_SOCK = s.sock },
+      on_exit = exited,
+    })
+    if not enter then
+      vim.cmd.stopinsert() -- (the config's TermOpen starts insert, which the code would get)
+    end
+    return job
+  end)
   if not ok or s.job <= 0 then
     vim.notify('gl: ' .. (ok and 'zsh would not start' or s.job), vim.log.levels.ERROR)
     exited()
     return
   end
-  vim.cmd.startinsert()
+  if enter then
+    vim.cmd.startinsert()
+  end
 end
 
 -- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's
