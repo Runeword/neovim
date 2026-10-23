@@ -19,11 +19,12 @@ local M = {}
 -- shell Neovim was started from exports it. Each fzf gl runs gets, last so that they win, the
 -- split's height (not gl's 70%), no preview, and binds that tell Neovim, in OSC 5379
 -- sequences on the terminal, that it starts (with the commit whose files it lists, $commit in
--- __git_log, else nothing) and which row has the cursor, by the field $GL_FIELD names: a
--- commit's hash, a file's path, or nothing when the search matches none. In gdc, it listens on
--- the socket $GL_SOCK too, where Neovim reads its list and moves its cursor (see point). The
--- function runs with the script's arguments; it prints `$EDITOR -- <files>`, which $EDITOR, a
--- function here, writes to $GL_FILES, absolute and NUL-separated.
+-- __git_log, else nothing), that it has all of its list, and which row has the cursor, by the
+-- field $GL_FIELD names: a commit's hash, a file's path, or nothing when the search matches
+-- none. In gdc, it listens on the socket $GL_SOCK too, where Neovim reads its list and moves
+-- its cursor (see point). The function runs with the script's arguments; it prints
+-- `$EDITOR -- <files>`, which $EDITOR, a function here, writes to $GL_FILES, absolute and
+-- NUL-separated.
 local SCRIPT = [[
 for f in xdg.sh variables.sh functions/git.bash; do
   . "$PERMEANCE_TREE/.config/shell/$f"
@@ -32,7 +33,8 @@ fzf() {
   command fzf "$@" --height=100% --preview-window=hidden ${GL_SOCK:+--listen=$GL_SOCK} \
     --bind "start:+execute-silent(printf '\\033]5379;gl;start;%s\\007' ${(q)commit-} >/dev/tty)" \
     --bind "focus:+execute-silent(printf '\\033]5379;gl;focus;%s\\007' $GL_FIELD >/dev/tty)" \
-    --bind 'zero:+execute-silent(printf "\033]5379;gl;focus;\007" >/dev/tty)'
+    --bind 'zero:+execute-silent(printf "\033]5379;gl;focus;\007" >/dev/tty)' \
+    --bind 'load:+execute-silent(printf "\033]5379;gl;load;\007" >/dev/tty)'
 }
 __gl_edit() {
   [ "$1" = -- ] && shift
@@ -372,8 +374,10 @@ local function tell(s, body, cb)
   end)
 end
 
--- fzf's cursor to the row of the file at path, if the list shows it (its search may not)
-local function point(s, path)
+-- fzf's cursor to the row of the file at path, if the list shows it (its search may not). For
+-- the file gdc started on (start, see heard), the rows aren't shown till then; without it in
+-- the list, the row the cursor's on is
+local function point(s, path, start)
   tell(s, nil, function(answer)
     local ok, state = pcall(vim.json.decode, answer or '')
     if s.closed or not (ok and type(state) == 'table' and type(state.matches) == 'table') then
@@ -384,9 +388,18 @@ local function point(s, path)
         if state.position ~= i - 1 then
           s.pointed = path -- (its word that the cursor's there: not a pick, see heard)
           tell(s, ('pos(%d)'):format(i))
+        elseif start then
+          s.start = nil
         end
         return
       end
+    end
+    local current = start and type(state.current) == 'table' and state.current.text
+    if start then
+      s.start = nil
+    end
+    if current then
+      ask(s, s.rev, current)
     end
   end)
 end
@@ -418,10 +431,21 @@ end
 
 -- fzf's word, in its OSC 5379 sequences: that it starts, listing the files of a commit (whose
 -- hash comes with it, else the commit under the cursor when the commits' list closed) or the
--- commits; which row has the cursor (nothing, for none). A list of the index's files (gdc's)
--- stays that. The cursor gl took to a file followed is no pick: that file shows already.
+-- commits; that it has all of its list; which row has the cursor (nothing, for none). A list
+-- of the index's files (gdc's) stays that. The cursor gl took to a file followed is no pick:
+-- that file shows already. Started on a file (s.start, see M.open), the rows the cursor's on
+-- aren't shown till it's on that file's, where it goes once the list is all there.
 local function heard(s, sequence)
   local kind, arg = sequence:match('^\27%]5379;gl;(%a+);(.*)')
+  if kind == 'load' and s.start then
+    point(s, s.start, true)
+    return
+  elseif kind == 'focus' and s.start then
+    if arg == s.start then
+      s.start, s.pointed = nil, nil
+    end
+    return
+  end
   if kind == 'focus' and s.pointed then
     local pointed = s.pointed
     s.pointed = nil
@@ -596,15 +620,36 @@ local function launch(s)
     exited()
     return
   end
+  -- (gdc on the code window's file: shown at once if staged, its row the list's cursor's once
+  -- fzf has all of the list, see heard)
+  local path = s.here and valid(s.origin) and in_repo(s, vim.api.nvim_win_get_buf(s.origin))
+  if path then
+    s.start = path
+    files(s, s.rev, function(list)
+      for _, f in ipairs(list) do
+        if f.new == path then
+          return ask(s, s.rev, path)
+        end
+      end
+    end)
+    vim.defer_fn(function()
+      s.start = nil -- (fzf never said it had all of its list)
+    end, 5000)
+  end
   if enter then
     vim.cmd.startinsert()
   end
 end
 
--- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's
-function M.open(name)
+-- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's. With
+-- opts.here, gdc starts on the current window's file, if it's staged (as Neovim does started by
+-- the shell's gdc: see plugins/minimal/gl.lua), not on the list's first
+function M.open(name, opts)
   local tool = TOOLS[name or 'log']
-  if session then -- (one at a time) back to it
+  if not tool then
+    vim.notify('gl: no picker ' .. name, vim.log.levels.ERROR)
+    return
+  elseif session then -- (one at a time) back to it
     if valid(session.win) then
       vim.api.nvim_set_current_win(session.win)
       vim.cmd.startinsert()
@@ -625,6 +670,7 @@ function M.open(name)
   end
 
   local s = { dir = dir, root = vim.trim(top.stdout), files = {}, tool = tool, rev = tool.rev }
+  s.here = tool.edit and opts and opts.here
   -- The references panel (myplugins/refs.nvim) gives way: closed while gl runs, the diff having
   -- its room, and open again after. gl then starts once the file tree, which steps aside for
   -- that panel, is back (it comes back on the next tick, after the panel's WinClosed): gl's
