@@ -103,8 +103,9 @@ local function panel_win()
   end
 end
 
--- A window showing a file (or a new one, or a directory's listing, Neovim's nvim.dir), not
--- floating, nor holding its buffer, nor the panel's (taken by another buffer, see taken)
+-- A window showing a file (or a new one, or a directory's listing, Neovim's nvim.dir, or a
+-- version of a file, myplugins/gl.nvim's diff), not floating, nor holding its buffer, nor the
+-- panel's (taken by another buffer, see taken)
 local function code_window(win)
   if
     not valid(win)
@@ -115,7 +116,7 @@ local function code_window(win)
     return false
   end
   local b = vim.api.nvim_win_get_buf(win)
-  return vim.bo[b].buftype == '' or vim.b[b].nvim_dir ~= nil
+  return vim.bo[b].buftype == '' or vim.b[b].nvim_dir ~= nil or vim.b[b].gl ~= nil
 end
 
 -- The code window to open files in: the one last entered, else any in this tab page (not
