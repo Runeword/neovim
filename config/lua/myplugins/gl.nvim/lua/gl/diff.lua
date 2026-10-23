@@ -514,10 +514,12 @@ end
 -- marked again as it changes, with the staged changes the unstaged ones after them. The file
 -- opens as :edit opens it, in the buffer list (a tab in the bufferline, which names it: no
 -- winbar), and stays open; once it leaves the window, its marks and gl's keys go (M.release).
--- Returns whether it opened the file.
+-- Followed, the file the window shows already, opened another way (the file tree, :edit), is
+-- only marked: in the buffer list or not, as it was opened (a file tree's preview isn't).
+-- Returns whether it opened (or marked) the file.
 -- Else, or with no such file (deleted, binary, too large), it's a new buffer of the version,
--- wiped once it leaves its window.
-function M.show(win, rev, file, old_text, new_text, extra, map, path)
+-- wiped once it leaves its window; but a file followed is left as it is.
+function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
   local staged = rev == M.INDEX
   local label = staged and 'staged' or rev
   local f = file or {}
@@ -528,6 +530,9 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path)
   local name = f.new or f.old
   local stat = path and f.new and not why and vim.uv.fs_lstat(path)
   local buf, real
+  if followed and not (stat and stat.type == 'file' and vim.fn.bufadd(path) == vim.api.nvim_win_get_buf(win)) then
+    return false
+  end
   if stat and stat.type == 'file' then
     buf = vim.fn.bufadd(path)
     real = shown[buf] and shown[buf].real or { autocmds = {}, timer = vim.uv.new_timer() }
@@ -594,7 +599,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path)
     end)
     vim.bo[buf].buflisted = listed
   end
-  if real then -- (in the buffer list, a tab in the bufferline, even if the window showed it already)
+  if real and not followed then -- (in the buffer list, a tab in the bufferline, even if the window showed it already)
     vim.bo[buf].buflisted = true
   end
   if prev ~= buf then
