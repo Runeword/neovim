@@ -178,9 +178,17 @@ local function diff_window(s)
   return w
 end
 
+-- The code window back as gl found it (its buffer, view and options), gl's marks and keys off
+-- the file it showed; turned off (s.off, see M.open), it keeps that file, as it is
 local function give_back(s)
   if valid(s.made) then
-    pcall(vim.api.nvim_win_close, s.made, true)
+    local b = vim.api.nvim_win_get_buf(s.made)
+    if s.off and vim.bo[b].buftype == '' then -- (a code window from now on)
+      diff.quiet(s.made, false)
+      diff.release(b)
+    else
+      pcall(vim.api.nvim_win_close, s.made, true)
+    end
   end
   local g = s.give
   if g and valid(g.win) then
@@ -191,8 +199,11 @@ local function give_back(s)
   end
   local shown = vim.api.nvim_win_get_buf(g.win)
   local opened = vim.bo[shown].buftype == '' -- (a file gdc opened, not a version's buffer)
+  local stay = s.off and opened
   local cmd
-  if not vim.api.nvim_buf_is_valid(g.buf) then
+  if stay then
+    -- (it stays)
+  elseif not vim.api.nvim_buf_is_valid(g.buf) then
     -- (gone meanwhile, as the file tree's preview goes once a file takes its place: a file
     -- opened stays, else the one opened last, else a new buffer)
     local last = s.last and vim.api.nvim_buf_is_valid(s.last) and s.last
@@ -212,7 +223,7 @@ local function give_back(s)
       vim.notify('gl: ' .. err, vim.log.levels.ERROR)
     end
   end
-  if vim.api.nvim_win_get_buf(g.win) == g.buf then
+  if not stay and vim.api.nvim_win_get_buf(g.win) == g.buf then
     vim.api.nvim_win_call(g.win, function()
       vim.fn.winrestview(g.view)
     end)
@@ -596,6 +607,8 @@ local function launch(s)
       edit(paths, s.origin)
     elseif s.jump then
       edit({ s.jump.path }, s.give and s.give.win or s.origin, s.jump.line)
+    elseif valid(s.off) then -- (turned off from that window: the cursor stays there)
+      vim.api.nvim_set_current_win(s.off)
     elseif valid(s.origin) then
       vim.api.nvim_set_current_win(s.origin)
     end
@@ -643,11 +656,16 @@ end
 
 -- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's. With
 -- opts.here, gdc starts on the current window's file, if it's staged (as Neovim does started by
--- the shell's gdc: see plugins/minimal/gl.lua), not on the list's first
+-- the shell's gdc: see plugins/minimal/gl.lua), not on the list's first. Open already, it's
+-- turned off: closed as q closes it, but a file it shows stays in the window, its diff gone
 function M.open(name, opts)
   local tool = TOOLS[name or 'log']
   if not tool then
     vim.notify('gl: no picker ' .. name, vim.log.levels.ERROR)
+    return
+  elseif session and session.tool == tool and session.job then
+    session.off = vim.api.nvim_get_current_win()
+    vim.fn.jobstop(session.job)
     return
   elseif session then -- (one at a time) back to it
     if valid(session.win) then
