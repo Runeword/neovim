@@ -614,8 +614,8 @@ end
 -- opens as :edit opens it, in the buffer list (a tab in the bufferline, which names it: no
 -- winbar), and stays open; once it leaves the window, its marks and gl's keys go (M.release).
 -- Followed, the file the window shows already, opened another way (the file tree, :edit), is
--- only marked: in the buffer list or not, as it was opened (a file tree's preview isn't).
--- Returns whether it opened (or marked) the file.
+-- only marked: in the buffer list or not, as it was opened (a file tree's preview isn't), the
+-- cursor where it was in it. Returns whether it opened (or marked) the file.
 -- Else, or with no such file (deleted, binary, too large), it's a new buffer of the version,
 -- wiped once it leaves its window; but a file followed is left as it is.
 function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
@@ -790,6 +790,9 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
     }
   end
 
+  if followed then -- (switched to: the cursor where the buffer had it, as Neovim puts it back)
+    return true
+  end
   vim.api.nvim_win_call(win, function()
     local row = rows[1] or 1
     vim.api.nvim_win_set_cursor(0, { row, 0 })
