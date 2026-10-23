@@ -268,15 +268,24 @@ local function keys(s, buf)
   end
 end
 
--- The files of the revision (a commit, the index), once per revision
+-- The files of the revision (a commit, the index), once per revision (asked again while git
+-- lists them, all told at once)
 local function files(s, rev, cb)
   if s.files[rev] then
     return cb(s.files[rev])
+  elseif s.waiting[rev] then
+    table.insert(s.waiting[rev], cb)
+    return
   end
+  s.waiting[rev] = { cb }
   diff.files(s.dir, rev, function(list)
     vim.schedule(function()
       s.files[rev] = list
-      cb(list)
+      local waiting = s.waiting[rev]
+      s.waiting[rev] = nil
+      for _, f in ipairs(waiting) do
+        f(list)
+      end
     end)
   end)
 end
@@ -337,8 +346,15 @@ local function pump(s)
     end
     -- (in the commits' list, a commit's first file: says of how many)
     local extra = not want.path and #list > 1 and ('  · 1 of %d files'):format(#list) or nil
+    local v = s.versions[file] -- (a staged file's, see launch: shown at once)
+    if v then
+      return show(file, v.old, v.new, extra)
+    end
     diff.versions(s.dir, want.rev, file, function(old, new)
       vim.schedule(function()
+        if want.rev == diff.INDEX then
+          s.versions[file] = { old = old, new = new }
+        end
         show(file, old, new, extra)
       end)
     end)
@@ -440,6 +456,30 @@ local function follow(s, b)
   end)
 end
 
+-- The row fzf's cursor is on, shown at once; but rows going by faster than REST ms apart (a key
+-- held), the one it rests on, as the file tree's j/k show theirs: gdc doesn't open every file
+-- passed
+local REST = 80
+local function settle(s, rev, path)
+  local now = vim.uv.now()
+  local held = s.moved and now - s.moved < REST
+  s.moved = now
+  s.rest = s.rest or vim.uv.new_timer()
+  s.rest:stop()
+  if not held then
+    return ask(s, rev, path)
+  end
+  s.rest:start(
+    REST,
+    0,
+    vim.schedule_wrap(function()
+      if not s.closed then
+        ask(s, rev, path)
+      end
+    end)
+  )
+end
+
 -- fzf's word, in its OSC 5379 sequences: that it starts, listing the files of a commit (whose
 -- hash comes with it, else the commit under the cursor when the commits' list closed) or the
 -- commits; that it has all of its list; which row has the cursor (nothing, for none). A list
@@ -468,10 +508,10 @@ local function heard(s, sequence)
     s.rev = arg ~= '' and arg or s.started and s.focused or nil
     s.started = true
   elseif kind == 'focus' and s.rev then
-    ask(s, arg == '' and '' or s.rev, arg ~= '' and arg or nil)
+    settle(s, arg == '' and '' or s.rev, arg ~= '' and arg or nil)
   elseif kind == 'focus' then
     s.focused = arg
-    ask(s, arg)
+    settle(s, arg)
   end
 end
 
@@ -555,6 +595,9 @@ local function launch(s)
   vim.api.nvim_create_autocmd('TermRequest', {
     group = group,
     buffer = s.buf,
+    -- (a file shown from here at once, its versions fetched already: opened with its own
+    -- autocommands, as :edit opens it, see diff.show)
+    nested = true,
     callback = function(ev)
       heard(s, type(ev.data) == 'table' and ev.data.sequence or ev.data)
     end,
@@ -569,6 +612,9 @@ local function launch(s)
     callback = function(ev)
       if vim.api.nvim_get_current_win() == s.view and not vim.b[ev.buf].gl then
         s.want, s.shown = nil, nil
+        if s.rest then
+          s.rest:stop() -- (nor the row the list's cursor rests on)
+        end
         diff.quiet(s.view, false)
         if s.tool.edit then
           follow(s, ev.buf)
@@ -592,6 +638,9 @@ local function launch(s)
   local function exited()
     s.closed = true
     vim.api.nvim_del_augroup_by_id(group)
+    if s.rest then
+      s.rest:close()
+    end
     local paths = picked(file)
     give_back(s)
     -- (the last window, once the others were closed: it shows the code again)
@@ -632,6 +681,19 @@ local function launch(s)
     vim.notify('gl: ' .. (ok and 'zsh would not start' or s.job), vim.log.levels.ERROR)
     exited()
     return
+  end
+  -- (gdc: the staged files' versions fetched at once, each file then marked as it shows, in the
+  -- same moment, whatever shows it: see pump)
+  if s.tool.edit then
+    files(s, s.rev, function(list)
+      diff.prefetch(s.dir, s.rev, list, function(got)
+        vim.schedule(function()
+          for file, v in pairs(got) do
+            s.versions[file] = s.versions[file] or v
+          end
+        end)
+      end)
+    end)
   end
   -- (gdc on the code window's file: shown at once if staged, its row the list's cursor's once
   -- fzf has all of the list, see heard)
@@ -687,7 +749,8 @@ function M.open(name, opts)
     return
   end
 
-  local s = { dir = dir, root = vim.trim(top.stdout), files = {}, tool = tool, rev = tool.rev }
+  local s =
+    { dir = dir, root = vim.trim(top.stdout), files = {}, waiting = {}, versions = {}, tool = tool, rev = tool.rev }
   s.here = tool.edit and opts and opts.here
   -- The references panel (myplugins/refs.nvim) gives way: closed while gl runs, the diff having
   -- its room, and open again after. gl then starts once the file tree, which steps aside for
