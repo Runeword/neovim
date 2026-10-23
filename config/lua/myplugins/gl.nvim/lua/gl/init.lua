@@ -20,15 +20,16 @@ local M = {}
 -- split's height (not gl's 70%), no preview, and binds that tell Neovim, in OSC 5379
 -- sequences on the terminal, that it starts (with the commit whose files it lists, $commit in
 -- __git_log, else nothing) and which row has the cursor, by the field $GL_FIELD names: a
--- commit's hash, a file's path, or nothing when the search matches none. The function runs
--- with the script's arguments; it prints `$EDITOR -- <files>`, which $EDITOR, a function here,
--- writes to $GL_FILES, absolute and NUL-separated.
+-- commit's hash, a file's path, or nothing when the search matches none. In gdc, it listens on
+-- the socket $GL_SOCK too, where Neovim reads its list and moves its cursor (see point). The
+-- function runs with the script's arguments; it prints `$EDITOR -- <files>`, which $EDITOR, a
+-- function here, writes to $GL_FILES, absolute and NUL-separated.
 local SCRIPT = [[
 for f in xdg.sh variables.sh functions/git.bash; do
   . "$PERMEANCE_TREE/.config/shell/$f"
 done
 fzf() {
-  command fzf "$@" --height=100% --preview-window=hidden \
+  command fzf "$@" --height=100% --preview-window=hidden ${GL_SOCK:+--listen=$GL_SOCK} \
     --bind "start:+execute-silent(printf '\\033]5379;gl;start;%s\\007' ${(q)commit-} >/dev/tty)" \
     --bind "focus:+execute-silent(printf '\\033]5379;gl;focus;%s\\007' $GL_FIELD >/dev/tty)" \
     --bind 'zero:+execute-silent(printf "\033]5379;gl;focus;\007" >/dev/tty)'
@@ -287,14 +288,16 @@ local function pump(s)
   s.busy = true
   local function show(file, old, new, extra)
     s.busy = false
-    if not s.closed and s.want == want then
+    if want.follow and s.want == want and not (valid(s.view) and vim.api.nvim_win_get_buf(s.view) == want.follow) then
+      s.want = nil -- (a file followed, gone from the window since: what shows instead stays)
+    elseif not s.closed and s.want == want then
       s.shown = want.key
       local w = diff_window(s)
       if w then
         local path = s.tool.edit and file and file.new and s.root .. '/' .. file.new or nil
         local opened = diff.show(w, want.rev, file, old, new, extra, function(buf)
           keys(s, buf)
-        end, path)
+        end, path, want.follow ~= nil)
         s.last = opened and vim.api.nvim_win_get_buf(w) or s.last -- (the file gdc opened last)
         s.file = file
       end
@@ -319,17 +322,109 @@ local function pump(s)
   end)
 end
 
-local function ask(s, rev, path)
-  s.want = { key = rev .. '\0' .. (path or ''), rev = rev, path = path }
+-- (follow: the buffer of the file, shown already, see follow)
+local function ask(s, rev, path, follow)
+  s.want = { key = rev .. '\0' .. (path or ''), rev = rev, path = path, follow = follow }
   pump(s)
+end
+
+-- Sends gdc's fzf, on its socket, actions to run (body), else asks for its state (the rows its
+-- list shows, as JSON), then cb(its answer, nil if none)
+local function tell(s, body, cb)
+  local pipe = vim.uv.new_pipe()
+  local chunks, done = {}, false
+  local function finish(answer)
+    if not done then
+      done = true
+      pipe:close()
+      if cb then
+        vim.schedule(function()
+          cb(answer)
+        end)
+      end
+    end
+  end
+  pipe:connect(s.sock, function(err)
+    if err then
+      return finish()
+    end
+    pipe:write(
+      body and ('POST / HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s'):format(#body, body)
+        or 'GET /?limit=100000 HTTP/1.1\r\n\r\n'
+    )
+    pipe:read_start(function(read_err, data)
+      if data and not read_err then
+        chunks[#chunks + 1] = data
+      else
+        finish(not read_err and table.concat(chunks):match('\r\n\r\n(.*)') or nil)
+      end
+    end)
+  end)
+end
+
+-- fzf's cursor to the row of the file at path, if the list shows it (its search may not)
+local function point(s, path)
+  tell(s, nil, function(answer)
+    local ok, state = pcall(vim.json.decode, answer or '')
+    if s.closed or not (ok and type(state) == 'table' and type(state.matches) == 'table') then
+      return
+    end
+    for i, row in ipairs(state.matches) do
+      if type(row) == 'table' and row.text == path then
+        if state.position ~= i - 1 then
+          s.pointed = path -- (its word that the cursor's there: not a pick, see heard)
+          tell(s, ('pos(%d)'):format(i))
+        end
+        return
+      end
+    end
+  end)
+end
+
+-- The path in the repository of the file buffer b holds, if it's one of the repository's
+local function in_repo(s, b)
+  local file = vim.bo[b].buftype == '' and vim.uv.fs_realpath(vim.api.nvim_buf_get_name(b))
+  local root = vim.uv.fs_realpath(s.root)
+  return file and root and file:sub(1, #root + 1) == root .. '/' and file:sub(#root + 2) or nil
+end
+
+-- A buffer shown in the code window (BufWinEnter) another way than by gl, gdc's (the file tree,
+-- the bufferline, :edit): what gl was about to show there doesn't come, the buffer stays; one of
+-- the staged files gets its change marked, as if picked in the list, whose cursor goes to its
+-- row
+local function follow(s, b)
+  if vim.api.nvim_get_current_win() ~= s.view or vim.b[b].gl then
+    return
+  end
+  s.want = nil
+  local path = in_repo(s, b)
+  if not path then
+    return
+  end
+  files(s, diff.INDEX, function(list)
+    for _, f in ipairs(list) do
+      if f.new == path and not s.closed and valid(s.view) and vim.api.nvim_win_get_buf(s.view) == b then
+        ask(s, diff.INDEX, path, b)
+        point(s, path)
+        return
+      end
+    end
+  end)
 end
 
 -- fzf's word, in its OSC 5379 sequences: that it starts, listing the files of a commit (whose
 -- hash comes with it, else the commit under the cursor when the commits' list closed) or the
 -- commits; which row has the cursor (nothing, for none). A list of the index's files (gdc's)
--- stays that.
+-- stays that. The cursor gl took to a file followed is no pick: that file shows already.
 local function heard(s, sequence)
   local kind, arg = sequence:match('^\27%]5379;gl;(%a+);(.*)')
+  if kind == 'focus' and s.pointed then
+    local pointed = s.pointed
+    s.pointed = nil
+    if arg == pointed then
+      return
+    end
+  end
   if kind == 'start' and not s.tool.rev then
     s.rev = arg ~= '' and arg or s.started and s.focused or nil
     s.started = true
@@ -424,6 +519,15 @@ local function launch(s)
   })
   -- Back in gl's window, back to fzf
   vim.api.nvim_create_autocmd('BufEnter', { group = group, buffer = s.buf, command = 'startinsert' })
+  if s.tool.edit then
+    s.sock = vim.fn.tempname() .. '.sock' -- (fzf's: a socket's name must end so)
+    vim.api.nvim_create_autocmd('BufWinEnter', {
+      group = group,
+      callback = function(ev)
+        follow(s, ev.buf)
+      end,
+    })
+  end
   vim.api.nvim_create_autocmd('VimResized', {
     group = group,
     callback = function()
@@ -462,7 +566,7 @@ local function launch(s)
   ok, s.job = pcall(vim.fn.jobstart, { 'zsh', '-f', '-c', SCRIPT, 'gl', unpack(s.tool.cmd) }, {
     term = true,
     cwd = s.dir,
-    env = { GL_FILES = file, GL_FIELD = s.tool.field },
+    env = { GL_FILES = file, GL_FIELD = s.tool.field, GL_SOCK = s.sock },
     on_exit = exited,
   })
   if not ok or s.job <= 0 then
