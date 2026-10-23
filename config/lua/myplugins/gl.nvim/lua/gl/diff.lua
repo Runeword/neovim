@@ -52,12 +52,13 @@ for name, attrs in pairs({
   vim.api.nvim_set_hl(quiet, name, attrs)
 end
 
--- By window showing a diff: the highlight namespace it had
-local quieted = {}
+-- By window showing a diff: the highlight namespace it had; the file it showed before gl's
+-- versions (see show)
+local quieted, before = {}, {}
 vim.api.nvim_create_autocmd('WinClosed', {
   group = group,
   callback = function(args)
-    quieted[tonumber(args.match)] = nil
+    quieted[tonumber(args.match)], before[tonumber(args.match)] = nil, nil
   end,
 })
 
@@ -110,17 +111,23 @@ function M.files(dir, rev, cb)
   end)
 end
 
--- The file's text before the change and after it (nil where it isn't there): in the commit's
--- parent and the commit, or in HEAD and the index
+-- The file's versions before the change and after it, as git names them: in the commit's parent
+-- and the commit, or in HEAD and the index
+local function specs(rev, file)
+  return {
+    old = file.old and (rev == M.INDEX and 'HEAD' or rev .. '^') .. ':' .. file.old,
+    new = file.new and (rev == M.INDEX and '' or rev) .. ':' .. file.new,
+  }
+end
+
+-- The file's text before the change and after it (nil where it isn't there)
 function M.versions(dir, rev, file, cb)
-  local specs = {}
-  specs.old = file.old and (rev == M.INDEX and 'HEAD' or rev .. '^') .. ':' .. file.old
-  specs.new = file.new and (rev == M.INDEX and '' or rev) .. ':' .. file.new
-  local text, left = {}, vim.tbl_count(specs)
+  local wanted = specs(rev, file)
+  local text, left = {}, vim.tbl_count(wanted)
   if left == 0 then
     return cb(nil, nil)
   end
-  for side, spec in pairs(specs) do
+  for side, spec in pairs(wanted) do
     vim.system({ 'git', 'show', spec }, { cwd = dir }, function(r)
       text[side] = r.code == 0 and r.stdout or nil
       left = left - 1
@@ -129,6 +136,64 @@ function M.versions(dir, rev, file, cb)
       end
     end)
   end
+end
+
+-- The texts M.versions gives, of all the files at once: cb({ [file] = { old =, new = } }), from
+-- git's cat-file in two batches (the sizes, then the texts) rather than two processes a file. A
+-- file with a version past LARGE isn't there (M.versions gets it, lines says why).
+function M.prefetch(dir, rev, list, cb)
+  local wanted = {} -- { file, side, spec }
+  for _, file in ipairs(list) do
+    for side, spec in pairs(specs(rev, file)) do
+      wanted[#wanted + 1] = { file = file, side = side, spec = spec }
+    end
+  end
+  local function batch(arg, items, done)
+    local input = {}
+    for i, item in ipairs(items) do
+      input[i] = item.spec
+    end
+    vim.system({ 'git', 'cat-file', arg }, { cwd = dir, stdin = table.concat(input, '\n') .. '\n' }, function(r)
+      done(r.code == 0 and r.stdout or '')
+    end)
+  end
+  batch('--batch-check', wanted, function(out)
+    local got, small, i = {}, {}, 0
+    for line in out:gmatch('[^\n]+') do
+      i = i + 1
+      local item, size = wanted[i], line:match('^%x+ blob (%d+)$')
+      if item then
+        got[item.file] = got[item.file] or {}
+        if size and tonumber(size) > LARGE then
+          got[item.file].large = true
+        elseif size then
+          small[#small + 1] = item
+        end -- (else missing: nil, as M.versions has it)
+      end
+    end
+    local function finish()
+      for file, v in pairs(got) do
+        got[file] = not v.large and v or nil
+      end
+      cb(got)
+    end
+    if #small == 0 then
+      return finish()
+    end
+    batch('--batch', small, function(texts)
+      local pos = 1
+      for _, item in ipairs(small) do
+        local header_end = texts:find('\n', pos, true)
+        local size = header_end and tonumber(texts:sub(pos, header_end - 1):match(' blob (%d+)$'))
+        if not size then -- (changed meanwhile)
+          return cb({})
+        end
+        got[item.file][item.side] = texts:sub(header_end + 1, header_end + size)
+        pos = header_end + size + 2 -- (past the text and its newline)
+      end
+      finish()
+    end)
+  end)
 end
 
 -- A version's lines, or why there are none
@@ -614,9 +679,15 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
   local prev = vim.api.nvim_win_get_buf(win)
   if prev ~= buf and real then
     -- (the file, opened: its autocommands run, the file tree and the bufferline follow it, and
-    -- its window options are back, the winbar the window had for it, not a version's)
+    -- its window options are back, the winbar the window had for it, not a version's; from a
+    -- version, wiped as it leaves, the alternate file is the file before the versions)
+    local from_version = vim.b[prev].gl and vim.bo[prev].buftype ~= ''
     local ok, err = pcall(vim.api.nvim_win_call, win, function()
-      vim.cmd('buffer ' .. buf)
+      vim.cmd((from_version and 'keepalt keepjumps ' or '') .. 'buffer ' .. buf)
+      local alt = from_version and before[win]
+      if alt and alt ~= buf and vim.api.nvim_buf_is_valid(alt) then
+        vim.fn.setreg('#', alt) -- (the alternate file: the file before the versions)
+      end
     end)
     if not ok then
       vim.notify('gl: ' .. err, vim.log.levels.ERROR)
@@ -627,6 +698,9 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
       return false
     end
   elseif prev ~= buf then
+    if vim.bo[prev].buftype == '' then
+      before[win] = prev
+    end
     local listed = vim.bo[buf].buflisted
     vim.api.nvim_win_call(win, function()
       vim.cmd('noautocmd keepalt keepjumps buffer ' .. buf)
