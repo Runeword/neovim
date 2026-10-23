@@ -7,9 +7,9 @@ local diff = require('gl.diff')
 -- lists look and work as they do there and change with it: pick a commit, then files of it; or
 -- staged files. Its preview, git show or git diff through delta, gives way to the code window
 -- showing the file under fzf's cursor (in the commits' list, the commit's first file) as the
--- commit leaves it, or as staged, the change marked in it (gl.diff). Where the shell opens the
--- files picked in a new Neovim ($EDITOR -- <files>), they open here, as buffers, the first in
--- the code window.
+-- commit leaves it, or in gdc the file itself, opened as a buffer, with the staged change marked
+-- in it (gl.diff). Where the shell opens the files picked in a new Neovim ($EDITOR -- <files>),
+-- they open here, as buffers, the first in the code window.
 local M = {}
 
 -- zsh -f gives gl the environment of a new shell: xdg.sh, which puts back the
@@ -44,8 +44,8 @@ cmd=$("$@") && [ -n "$cmd" ] && eval "$cmd"
 -- The shell's pickers gl runs, by name: the function and its arguments, the field of a row that
 -- names it (in __git_log's lists, the second: a commit's hash, a file's path; __git_diff's rows
 -- are paths), the revision whose files the list shows from the start, if any (gdc's: the
--- index, the staged files), and whether its files are shown as they are in the work tree, to
--- edit with the change marked on them (gl.diff), rather than as a version of theirs (gl's)
+-- index, the staged files), and whether its files open, the work tree's, to edit with the change
+-- marked on them (gl.diff), rather than show as a version of theirs (gl's)
 local TOOLS = {
   log = { cmd = { '__git_log' }, field = '{2}' },
   staged = { cmd = { '__git_diff', 'staged' }, field = '{}', rev = diff.INDEX, edit = true },
@@ -101,9 +101,16 @@ local function edit(paths, origin, line)
   if w then
     vim.api.nvim_set_current_win(w)
   end
-  local ok, err = pcall(vim.cmd, ('edit %s%s'):format(line and '+' .. line .. ' ' or '', vim.fn.fnameescape(paths[1])))
-  if not ok then
-    vim.notify(err, vim.log.levels.ERROR)
+  if vim.fn.bufadd(paths[1]) == vim.api.nvim_get_current_buf() then -- (shown: :edit would read it again)
+    if line then
+      vim.cmd(('normal! %dG'):format(line))
+    end
+  else
+    local ok, err =
+      pcall(vim.cmd, ('edit %s%s'):format(line and '+' .. line .. ' ' or '', vim.fn.fnameescape(paths[1])))
+    if not ok then
+      vim.notify(err, vim.log.levels.ERROR)
+    end
   end
   for i = 2, #paths do
     vim.cmd('badd ' .. vim.fn.fnameescape(paths[i]))
@@ -177,19 +184,38 @@ local function give_back(s)
     return
   end
   local shown = vim.api.nvim_win_get_buf(g.win)
-  if vim.api.nvim_buf_is_valid(g.buf) then
+  local opened = vim.bo[shown].buftype == '' -- (a file gdc opened, not a version's buffer)
+  local cmd
+  if not vim.api.nvim_buf_is_valid(g.buf) then
+    -- (gone meanwhile, as the file tree's preview goes once a file takes its place: a file
+    -- opened stays, else the one opened last, else a new buffer)
+    local last = s.last and vim.api.nvim_buf_is_valid(s.last) and s.last
+    cmd = not opened and (last and 'keepalt buffer ' .. last or 'enew') or nil
+  elseif s.last then
+    -- (after files opened, gdc's: back the same way, its autocommands run, and the alternate
+    -- file isn't a version's buffer, wiped once it leaves)
+    cmd = (opened and '' or 'keepalt ') .. 'buffer ' .. g.buf
+  else
     swap(g.win, g.buf)
+  end
+  if cmd then
+    local ok, err = pcall(vim.api.nvim_win_call, g.win, function()
+      vim.cmd(cmd)
+    end)
+    if not ok then
+      vim.notify('gl: ' .. err, vim.log.levels.ERROR)
+    end
+  end
+  if vim.api.nvim_win_get_buf(g.win) == g.buf then
     vim.api.nvim_win_call(g.win, function()
       vim.fn.winrestview(g.view)
     end)
-  else
-    vim.api.nvim_win_call(g.win, vim.cmd.enew)
   end
   for opt, value in pairs(g.opts) do
     vim.api.nvim_set_option_value(opt, value, { win = g.win, scope = 'local' })
   end
-  -- (a file of the work tree marked in place: given back, kept if it's the one <CR> opens)
-  diff.release(shown, s.jump ~= nil and vim.fn.bufnr(s.jump.path) == shown)
+  -- (a file of the work tree marked in place: its marks and gl's keys off, the file still open)
+  diff.release(shown)
 end
 
 -- From the diff, the file at the cursor's line (the work tree's, as delta's links open it; in
@@ -266,9 +292,10 @@ local function pump(s)
       local w = diff_window(s)
       if w then
         local path = s.tool.edit and file and file.new and s.root .. '/' .. file.new or nil
-        diff.show(w, want.rev, file, old, new, extra, function(buf)
+        local opened = diff.show(w, want.rev, file, old, new, extra, function(buf)
           keys(s, buf)
         end, path)
+        s.last = opened and vim.api.nvim_win_get_buf(w) or s.last -- (the file gdc opened last)
         s.file = file
       end
     end
