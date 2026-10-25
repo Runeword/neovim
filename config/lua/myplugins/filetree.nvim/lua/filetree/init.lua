@@ -17,7 +17,8 @@ local vim = vim
 -- goes to its first entry), or shows the file in the code
 -- window, staying in the panel; h/<Left> closes the directory, else goes to its parent;
 -- - closes the directory holding the entry; W closes them all; R reads the disk again;
--- q closes the panel.
+-- q closes the panel. There and in the code window, <C-Down>/<C-Up> go to the next/previous
+-- file, past the directories, showing it as j/k do (see M.step_file).
 --
 -- The panel holds its buffer ('winfixbuf') and is never all a tab page holds: when the last
 -- code window closes (:bdelete, :close), a code window takes its place. :q there closes the
@@ -451,11 +452,15 @@ end
 -- kept, as VS Code's explorer shows a preview: a file not open as a buffer shows unlisted
 -- (no tab in the bufferline, not highlighted as open), and goes once another takes its
 -- place, unless it's kept (see keep_preview): opened from the panel (<Tab>, <CR>, l, o, a
--- click), gone to (the code window entered), or changed. A file open shows as it is.
+-- click), gone to (the code window entered), moved in (its cursor moved, as when
+-- <C-Down>/<C-Up> showed it from the code window: see M.step_file), or changed. A file open
+-- shows as it is.
 local PREVIEW_MS = 80 -- held, j/k show the file they rest on this long after the last move
 local PREVIEW_MAX = 5 * 1024 * 1024 -- bytes: bigger files aren't shown on the way (<CR> opens them)
 
-local preview -- the file shown as a preview: { buf, made (the buffer was made for it) }
+-- The file shown as a preview: { buf, made (its buffer was made for it), loaded (by it: made,
+-- or kept unloaded until then), cursor (where it showed) }
+local preview
 local preview_timer -- (while j/k are held)
 local moved = 0 -- vim.uv.now() of j/k's last move
 local passing = false -- going to the code window to switch buffers there, passing the preview by
@@ -486,24 +491,31 @@ local function unlist(b)
   vim.o.eventignore = eventignore
 end
 
--- A preview gone: its buffer wiped if it was made for it (an unlisted one: no BufDelete)
+-- A preview gone: its buffer wiped if it was made for it (an unlisted one: no BufDelete), or
+-- unloaded again if it was only loaded for it (a buffer kept unloaded, as :bdelete leaves one,
+-- or as aerial's vim.uri_to_bufnr() makes one for the diagnostics of a file closed)
 local function drop_preview(gone)
   local b = gone.buf
   if
-    gone.made
+    gone.loaded
     and vim.api.nvim_buf_is_valid(b)
     and not vim.bo[b].buflisted
     and not vim.bo[b].modified
     and #vim.fn.win_findbuf(b) == 0
   then
-    pcall(vim.api.nvim_buf_delete, b, {})
+    pcall(vim.api.nvim_buf_delete, b, { unload = not gone.made })
   end
 end
 
--- Show the file under the panel's cursor in the code window, as a preview if it isn't open
-local function show_preview()
-  local win, code = panel_win(), main_win()
-  if not (win and code) or vim.api.nvim_get_current_win() ~= win then
+-- Show the file under the panel's cursor in the code window, as a preview if it isn't open:
+-- moved to in the panel, or from the code window (<C-Down>/<C-Up>), `from` still the current
+-- window
+local function show_preview(from)
+  local win, code = panel_win(), from
+  if from == win then
+    code = main_win()
+  end
+  if not (win and code_window(code)) or vim.api.nvim_get_current_win() ~= from then
     return
   end
   local row = rows[vim.api.nvim_win_get_cursor(win)[1]]
@@ -517,32 +529,45 @@ local function show_preview()
   end
   local before = buffer_of(row.path)
   local listed = before and vim.bo[before].buflisted
+  local loaded = before and vim.api.nvim_buf_is_loaded(before)
   -- (replacing a preview, the alternate file stays the one shown before them, for <C-^>)
   local keepalt = preview and shown == preview.buf and 'keepalt ' or ''
   local ok = pcall(vim.api.nvim_win_call, code, function()
     vim.cmd(keepalt .. 'keepjumps edit ' .. vim.fn.fnameescape(row.path))
   end)
   local b = vim.api.nvim_win_get_buf(code)
-  if ok and not listed and file_of(b) == row.path then
+  if file_of(b) ~= row.path then
+    return
+  end
+  -- (the code window's file, under the panel's cursor already: update leaves the cursor
+  -- where <C-Down>/<C-Up> held may have moved it on since)
+  current, revealed = row.path, true
+  if ok and not listed then
     unlist(b) -- (:edit listed it)
-    preview = { buf = b, made = before == nil }
+    preview = { buf = b, made = before == nil, loaded = not loaded, cursor = vim.api.nvim_win_get_cursor(code) }
   end
 end
 
--- After j/k: the file shown at once; j/k held (moves PREVIEW_MS apart or
+-- After j/k (or <C-Down>/<C-Up>): the file shown at once; held (moves PREVIEW_MS apart or
 -- less), once they rest
 local function preview_soon()
-  local now = vim.uv.now()
+  local now, from = vim.uv.now(), vim.api.nvim_get_current_win()
   local resting = now - moved > PREVIEW_MS
   moved = now
   if preview_timer then
     preview_timer:stop()
   end
   if resting then
-    show_preview()
+    show_preview(from)
   else
     preview_timer = preview_timer or vim.uv.new_timer()
-    preview_timer:start(PREVIEW_MS, 0, vim.schedule_wrap(show_preview))
+    preview_timer:start(
+      PREVIEW_MS,
+      0,
+      vim.schedule_wrap(function()
+        show_preview(from)
+      end)
+    )
   end
 end
 
@@ -595,6 +620,43 @@ function M.clicked()
   else
     open_file(row.path, 'stay')
   end
+end
+
+local walked -- the panel's line M.step_file put its cursor on last
+
+-- <C-Down>/<C-Up> (with no window below/above, see mappings.lua), in the panel or the code
+-- window: the panel's cursor on the `n`th file on (back, n < 0), past the directories, shown
+-- in the code window as j/k show it, a preview kept once it's moved in (see setup); false if
+-- the panel isn't open, or the window is another
+function M.step_file(n)
+  local win, from = panel_win(), vim.api.nvim_get_current_win()
+  if not win or (from ~= win and not code_window(from)) then
+    return false
+  end
+  -- From the panel's cursor; from the code window, from its file, if the panel shows it, as
+  -- the cursor may have moved since (left on a directory, dragged by the mouse's wheel),
+  -- unless it's still where the last move put it (on a file not shown yet: held, or too big)
+  local start = vim.api.nvim_win_get_cursor(win)[1]
+  if from ~= win and start ~= walked then
+    start = line_of[file_of(vim.api.nvim_win_get_buf(from))] or start
+  end
+  local line, by = start, n < 0 and -1 or 1
+  for _ = 1, math.abs(n) do
+    local ahead = line + by
+    while rows[ahead] and rows[ahead].dir do
+      ahead = ahead + by
+    end
+    if not rows[ahead] then
+      break -- (no file further: the last one)
+    end
+    line = ahead
+  end
+  if line ~= vim.api.nvim_win_get_cursor(win)[1] then
+    set_cursor(win, line)
+    walked = line
+    preview_soon()
+  end
+  return true
 end
 
 local function keymaps(b)
@@ -818,30 +880,21 @@ function M.title()
   return root and vim.fn.fnamemodify(root, ':~') or ''
 end
 
--- At start (UIEnter): the panel opens beside the file if the tree shows it (not a commit
--- message, a temporary file, a man page, help, a diff), or without one. Started on a
--- directory (nvim .), the panel takes the place of its listing (Neovim's nvim.dir, netrw
--- being off here), the directory the working one; later, :edit of one still lists it.
+-- At start (UIEnter): the panel never opens by itself, beside a file or without one (only
+-- from <leader>e), but started on a directory (nvim .), it takes the place of its listing
+-- (Neovim's nvim.dir, netrw being off here), the directory the working one; later, :edit
+-- of one still lists it.
 function M.start()
   local b = vim.api.nvim_get_current_buf()
   local name = vim.api.nvim_buf_get_name(b)
   if vim.wo.diff then
     return
   end
-  root = cwd()
   if vim.fn.isdirectory(name) == 1 and (vim.bo[b].buftype == '' or vim.b[b].nvim_dir ~= nil) then
     vim.cmd('cd ' .. vim.fn.fnameescape(name))
     vim.cmd.enew()
     pcall(vim.api.nvim_buf_delete, b, { force = true })
     M.open(true)
-  elseif vim.bo[b].buftype ~= '' then
-    return
-  elseif name == '' then
-    if vim.api.nvim_buf_line_count(b) == 1 and vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] == '' then
-      M.open() -- (not on text read from stdin)
-    end
-  elseif expand_to(vim.fs.normalize(name)) then
-    M.open()
   end
 end
 
@@ -1093,8 +1146,8 @@ function M.setup()
     end
     update_later()
   end)
-  -- A preview another buffer took the place of goes (see drop_preview); a preview changed
-  -- is kept (see show_preview)
+  -- A preview another buffer took the place of goes (see drop_preview); a preview changed,
+  -- or moved in, is kept (see show_preview)
   on('BufHidden', function(args)
     if preview and args.buf == preview.buf then
       local gone = preview
@@ -1110,6 +1163,13 @@ function M.setup()
       keep_preview()
     end
   end, { pattern = 'modified' })
+  -- (its cursor moved from where it showed: the file used, not only passed by, as
+  -- <C-Down>/<C-Up> pass files by in the code window)
+  on('CursorMoved', function(args)
+    if preview and args.buf == preview.buf and not vim.deep_equal(vim.api.nvim_win_get_cursor(0), preview.cursor) then
+      keep_preview()
+    end
+  end)
   on('BufWinEnter', taken)
   on('WinEnter', entered)
   on('WinClosed', closed)
