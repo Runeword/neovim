@@ -53,8 +53,21 @@ vim.keymap.set('n', '<Leader>C', require('functions').toggleComments, { desc = '
 vim.keymap.set('t', '<Esc>', [[<C-\><C-n>]])
 vim.keymap.set('n', '<Esc>', require('functions').cancel)
 
-vim.keymap.set({ 'n', 'x' }, '<C-Down>', '<C-w>j', { desc = 'Focus bottom window' })
-vim.keymap.set({ 'n', 'x' }, '<C-Up>', '<C-w>k', { desc = 'Focus top window' })
+-- Up/down focus the window there. With none there and the file tree open, they go to the
+-- next/previous file in the tree instead, from the tree or the code (myplugins/filetree.nvim).
+local function focus_or_file(dir, step)
+  return function()
+    if vim.fn.winnr(dir) == vim.fn.winnr() and package.loaded.filetree then
+      require('filetree').step_file(step * vim.v.count1)
+    else
+      vim.cmd.wincmd(dir)
+    end
+  end
+end
+vim.keymap.set('n', '<C-Down>', focus_or_file('j', 1), { desc = 'Focus bottom window, else next file in the tree' })
+vim.keymap.set('n', '<C-Up>', focus_or_file('k', -1), { desc = 'Focus top window, else previous file in the tree' })
+vim.keymap.set('x', '<C-Down>', '<C-w>j', { desc = 'Focus bottom window' })
+vim.keymap.set('x', '<C-Up>', '<C-w>k', { desc = 'Focus top window' })
 vim.keymap.set({ 'n', 'x' }, '<C-Left>', '<C-w>h', { desc = 'Focus left window' })
 vim.keymap.set({ 'n', 'x' }, '<C-Right>', '<C-w>l', { desc = 'Focus right window' })
 
