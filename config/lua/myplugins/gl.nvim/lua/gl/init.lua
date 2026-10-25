@@ -20,19 +20,21 @@ local M = {}
 -- split's height (not gl's 70%), no preview, and binds that tell Neovim, in OSC 5379
 -- sequences on the terminal, that it starts (with the commit whose files it lists, $commit in
 -- __git_log, else nothing), that it has all of its list, and which row has the cursor, by the
--- field $GL_FIELD names: a commit's hash, a file's path, or nothing when the search matches
--- none. In gdc, it listens on the socket $GL_SOCK too, where Neovim reads its list and moves
--- its cursor (see point). The function runs with the script's arguments; it prints
--- `$EDITOR -- <files>`, which $EDITOR, a function here, writes to $GL_FILES, absolute and
--- NUL-separated.
+-- field $GL_FIELD names ($GL_FILE_FIELD, in the files of a commit: see TOOLS): a commit's
+-- hash, a file's path, or nothing when the search matches none. In gdc, it listens on the
+-- socket $GL_SOCK too, where Neovim reads its list and moves its cursor (see point). The
+-- function runs with the script's arguments; it prints `$EDITOR -- <files>`, which $EDITOR, a
+-- function here, writes to $GL_FILES, absolute and NUL-separated.
 local SCRIPT = [[
 for f in xdg.sh variables.sh functions/git.bash; do
   . "$PERMEANCE_TREE/.config/shell/$f"
 done
 fzf() {
+  local field=$GL_FIELD
+  [ -n "${commit-}" ] && field=${GL_FILE_FIELD:-$GL_FIELD}
   command fzf "$@" --height=100% --preview-window=hidden ${GL_SOCK:+--listen=$GL_SOCK} \
     --bind "start:+execute-silent(printf '\\033]5379;gl;start;%s\\007' ${(q)commit-} >/dev/tty)" \
-    --bind "focus:+execute-silent(printf '\\033]5379;gl;focus;%s\\007' $GL_FIELD >/dev/tty)" \
+    --bind "focus:+execute-silent(printf '\\033]5379;gl;focus;%s\\007' $field >/dev/tty)" \
     --bind 'zero:+execute-silent(printf "\033]5379;gl;focus;\007" >/dev/tty)' \
     --bind 'load:+execute-silent(printf "\033]5379;gl;load;\007" >/dev/tty)'
 }
@@ -44,14 +46,16 @@ EDITOR=__gl_edit
 cmd=$("$@") && [ -n "$cmd" ] && eval "$cmd"
 ]]
 
--- The shell's pickers gl runs, by name: the function and its arguments, the field of a row that
--- names it (in __git_log's lists, the second: a commit's hash, a file's path; __git_diff's rows
--- are paths), the revision whose files the list shows from the start, if any (gdc's: the
--- index, the staged files), and whether its files open, the work tree's, to edit with the change
--- marked on them (gl.diff), rather than show as a version of theirs (gl's)
+-- The shell's pickers gl runs, by name: the function and its arguments; the field of a row that
+-- names it, as the shell's previews read it (in __git_log's commits, the third, after the row's
+-- number and the author and date: the hash; in __git_diff's list, all but the last, the row's
+-- number: the path), and of a row of a commit's files, __git_log's second list (all but the
+-- first, the tree's drawing: the path); the revision whose files the list shows from the start,
+-- if any (gdc's: the index, the staged files); and whether its files open, the work tree's, to
+-- edit with the change marked on them (gl.diff), rather than show as a version of theirs (gl's)
 local TOOLS = {
-  log = { cmd = { '__git_log' }, field = '{2}' },
-  staged = { cmd = { '__git_diff', 'staged' }, field = '{}', rev = diff.INDEX, edit = true },
+  log = { cmd = { '__git_log' }, field = '{3}', file_field = '{2..}' },
+  staged = { cmd = { '__git_diff', 'staged' }, field = '{s..-2}', rev = diff.INDEX, edit = true },
 }
 
 -- The code window's options a change sets (gl.diff: its winbar), given back with it
@@ -401,6 +405,12 @@ local function tell(s, body, cb)
   end)
 end
 
+-- The path of a row of gdc's list, as fzf has it: the path, then 0x1f and the row's number (see
+-- __git_diff)
+local function row_path(row)
+  return type(row) == 'table' and type(row.text) == 'string' and row.text:match('^(.*)\31 *%d+$') or nil
+end
+
 -- fzf's cursor to the row of the file at path, if the list shows it (its search may not). For
 -- the file gdc started on (start, see heard), the rows aren't shown till then; without it in
 -- the list, the row the cursor's on is
@@ -411,7 +421,7 @@ local function point(s, path, start)
       return
     end
     for i, row in ipairs(state.matches) do
-      if type(row) == 'table' and row.text == path then
+      if row_path(row) == path then
         if state.position ~= i - 1 then
           s.pointed = path -- (its word that the cursor's there: not a pick, see heard)
           tell(s, ('pos(%d)'):format(i))
@@ -421,7 +431,7 @@ local function point(s, path, start)
         return
       end
     end
-    local current = start and type(state.current) == 'table' and state.current.text
+    local current = start and row_path(state.current)
     if start then
       s.start = nil
     end
@@ -669,7 +679,7 @@ local function launch(s)
     local job = vim.fn.jobstart({ 'zsh', '-f', '-c', SCRIPT, 'gl', unpack(s.tool.cmd) }, {
       term = true,
       cwd = s.dir,
-      env = { GL_FILES = file, GL_FIELD = s.tool.field, GL_SOCK = s.sock },
+      env = { GL_FILES = file, GL_FIELD = s.tool.field, GL_FILE_FIELD = s.tool.file_field, GL_SOCK = s.sock },
       on_exit = exited,
     })
     if not enter then
@@ -695,15 +705,17 @@ local function launch(s)
       end)
     end)
   end
-  -- (gdc on the code window's file: shown at once if staged, its row the list's cursor's once
-  -- fzf has all of the list, see heard)
-  local path = s.here and valid(s.origin) and in_repo(s, vim.api.nvim_win_get_buf(s.origin))
+  -- (gdc on the code window's file: marked at once if staged, in place, the cursor where it is
+  -- (started by the shell, on the file it just opened: on its first change, as gdc's moves take
+  -- it), its row the list's cursor's once fzf has all of the list, see heard)
+  local buf = s.tool.edit and code_window(s.origin) and vim.api.nvim_win_get_buf(s.origin)
+  local path = buf and in_repo(s, buf)
   if path then
-    s.start = path
+    s.start, s.view = path, s.origin -- (the diff's window, see diff_window)
     files(s, s.rev, function(list)
       for _, f in ipairs(list) do
         if f.new == path then
-          return ask(s, s.rev, path)
+          return ask(s, s.rev, path, not s.from_shell and buf or nil)
         end
       end
     end)
@@ -716,10 +728,12 @@ local function launch(s)
   end
 end
 
--- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's. With
--- opts.here, gdc starts on the current window's file, if it's staged (as Neovim does started by
--- the shell's gdc: see plugins/minimal/gl.lua), not on the list's first. Open already, it's
--- turned off: closed as q closes it, but a file it shows stays in the window, its diff gone
+-- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's. gdc
+-- starts on the current window's file, if it's staged: its change marked, the cursor where it is
+-- (with opts.from_shell, Neovim started by the shell's gdc on the file, see
+-- plugins/minimal/gl.lua: on the change, the file just opened); else on the list's first file.
+-- Open already, it's turned off: closed as q closes it, but a file it shows stays in the window,
+-- its diff gone
 function M.open(name, opts)
   local tool = TOOLS[name or 'log']
   if not tool then
@@ -751,7 +765,7 @@ function M.open(name, opts)
 
   local s =
     { dir = dir, root = vim.trim(top.stdout), files = {}, waiting = {}, versions = {}, tool = tool, rev = tool.rev }
-  s.here = tool.edit and opts and opts.here
+  s.from_shell = opts and opts.from_shell
   -- The references panel (myplugins/refs.nvim) gives way: closed while gl runs, the diff having
   -- its room, and open again after. gl then starts once the file tree, which steps aside for
   -- that panel, is back (it comes back on the next tick, after the panel's WinClosed): gl's
