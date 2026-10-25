@@ -178,7 +178,8 @@ local WARMUP_MAX_MS = 60000 -- (a progress that never ends ends the loading anyw
 -- read yet (ts_ls's do, until its "Initializing JS/TS language features" ends): a first
 -- progress it reports within WARMUP_MS of attaching is taken for that, its answers then
 -- passed on, not remembered; when it ends, those it gave before it began are dropped
--- too (see init.lua). One reporting none by then (lua_ls) answers in full from the start.
+-- too (see init.lua). One reporting none by then (lua_ls, in a small project) answers in
+-- full from then on; before, its answers of nothing are asked again (see status_of).
 function M.warm_up(id)
   if warming[id] == nil then
     warming[id] = { begun = false }
@@ -310,20 +311,27 @@ end
 local TRANSIENT = { [-32800] = true, [-32801] = true, [-32802] = true }
 
 -- How the `count` clients asked did, from their `replies`: nil when each answered,
--- 'partial' when only some did (or one still loading the project did, see M.warm_up),
--- else 'transient' when asking again can do better (a transient error, a server left
--- silent), 'error' when not (an answer of nothing, as gopls gives on a keyword)
+-- 'starting' when each did, but one still starting (see M.warm_up) with nothing, to be
+-- asked again (lua_ls answers its first question null while it starts, about a word
+-- with references, without telling of any loading); 'partial' when only some did (or
+-- one still loading the project did); else 'transient' when asking again can do better
+-- (a transient error, a server left silent), 'error' when not (an answer of nothing, as
+-- gopls gives on a keyword)
 local function status_of(replies, count)
-  local ok, transient, loading = 0, #replies < count, false
+  local ok, transient, loading, starting = 0, #replies < count, false, false
   for _, r in ipairs(replies) do
     if r.err then
       transient = transient or TRANSIENT[r.err.code] or false
     else
       ok = ok + 1
-      loading = loading or (warming[r.client.id] and warming[r.client.id].begun) or false
+      local w = warming[r.client.id]
+      loading = loading or (w and w.begun) or false
+      starting = starting or (w and (r.result == nil or next(r.result) == nil)) or false
     end
   end
-  if ok == count and not loading then
+  if ok == count and starting then
+    return 'starting'
+  elseif ok == count and not loading then
     return nil
   elseif ok == count then
     return 'partial'
@@ -380,13 +388,16 @@ function fetch.defs(buf, pos, q, done)
 end
 
 local ASK_STALE_MS = 10000 -- a question left unanswered this long is asked again
-local RETRIES, RETRY_MS = 2, 150 -- a question failing for a transient reason is asked again
+-- A question failing for a transient reason, or answered nothing by a server still
+-- starting (see status_of), is asked again
+local RETRIES, RETRY_MS = 2, 150
 
 -- Calls back with the `what` answer ('refs' or 'defs') about the word at `pos` in `buf`,
 -- async: memoized, with one question out to the servers shared by everyone asking
 -- meanwhile. When the servers failed to answer it, it calls back with nil if asking
--- again may do (callers keep what they show), else with an answer of nothing. `tag`
--- names the asker for M.cancel.
+-- again may do (callers keep what they show), else with an answer of nothing. An answer
+-- of nothing from a server still starting is passed on, not remembered. `tag` names the
+-- asker for M.cancel.
 function M.ask(buf, pos, what, cb, tag)
   local entry
   entry, pos = M.at(buf, pos, true)
@@ -413,7 +424,7 @@ function M.ask(buf, pos, what, cb, tag)
     fetch[what](buf, pos, q, function(answer, status)
       if q.cancelled then
         return
-      elseif status == 'transient' and q.tries < RETRIES then
+      elseif (status == 'transient' or status == 'starting') and q.tries < RETRIES then
         q.tries = q.tries + 1
         return vim.defer_fn(function()
           if not q.cancelled and vim.api.nvim_buf_is_valid(buf) then
