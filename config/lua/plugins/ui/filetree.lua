@@ -15,15 +15,13 @@ return {
     },
   },
 
-  -- Loaded at start, as the tree opens then
+  -- Loaded at start, as the tree can open then
   lazy = false,
 
   config = function()
     require('filetree').setup()
-    -- At start, the tree opens beside the file if it's one of the working directory's (not
-    -- a commit message, a temporary file), when Neovim starts without a file, or on a
-    -- directory (nvim .); not beside a man page, help or a diff, nor in a run without a UI,
-    -- as headless
+    -- At start, the tree never opens by itself (only from <leader>e), but on a directory
+    -- (nvim .) it takes the place of its listing; not in a run without a UI, as headless
     vim.api.nvim_create_autocmd('UIEnter', {
       group = vim.api.nvim_create_augroup('filetree_start', { clear = true }),
       once = true,
