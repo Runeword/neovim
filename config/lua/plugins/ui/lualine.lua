@@ -10,6 +10,14 @@ return {
   config = function()
     local lualine = require('lualine')
 
+    -- A file by its full path (3: absolute, ~ for home), other buffers (help, terminals, plugin
+    -- panels) by their name as before (1: relative), not as a file in the working directory
+    local filename = require('lualine.components.filename'):extend()
+    function filename:update_status()
+      self.options.path = vim.bo.buftype == '' and 3 or 1
+      return filename.super.update_status(self)
+    end
+
     -- stylua: ignore
     local colors = {
       bg       = 'none',
@@ -54,25 +62,26 @@ return {
     local sectionLeft = {
       {
         'mode',
-        padding = { left = 1, right = 2, },
+        padding = { left = 1, right = 2 },
         fmt = string.lower,
       },
 
       {
         'selectioncount',
-        padding = { left = 0, right = 1, },
+        padding = { left = 0, right = 1 },
         fmt = function(str)
-          return str:gsub('(%d+)', function(n) return string.format('%3d', tonumber(n)) end)
+          return str:gsub('(%d+)', function(n)
+            return string.format('%3d', tonumber(n))
+          end)
         end,
       },
 
       {
-        'filename',
+        filename,
         cond = conditions.buffer_not_empty,
         file_status = false,
         newfile_status = true,
-        path = 1,
-        padding = { left = 0, right = 1, },
+        padding = { left = 0, right = 1 },
         symbols = {
           unnamed = 'unnamed',
           newfile = 'new',
@@ -81,8 +90,8 @@ return {
 
       {
         'diagnostics',
-        sources = { 'nvim_diagnostic', },
-        symbols = { error = '', warn = '', hint = '', info = '', },
+        sources = { 'nvim_diagnostic' },
+        symbols = { error = '', warn = '', hint = '', info = '' },
       },
 
       --------------------------- Mid section
@@ -93,7 +102,7 @@ return {
       {
         'diff',
         -- symbols = { added = " ", modified = " ", removed = " " },
-        symbols = { added = '+', modified = '~', removed = '-', },
+        symbols = { added = '+', modified = '~', removed = '-' },
         -- diff_color = {
         -- 	added = { fg = colors.green },
         -- 	modified = { fg = colors.orange },
@@ -110,7 +119,7 @@ return {
           return branchName == '' and '' or branchName
         end,
         -- fmt = trunc(120, 60, 60, true),
-        padding = { right = 1, left = 0, },
+        padding = { right = 1, left = 0 },
       },
 
       -- {
@@ -144,8 +153,8 @@ return {
           -- We are going to use lualine_c an lualine_x as left and
           -- right section. Both are highlighted by c theme .  So we
           -- are just setting default looks o statusline
-          normal = { c = { fg = colors.fg, bg = colors.bg, }, },
-          inactive = { c = { fg = colors.fg, bg = colors.bg, }, },
+          normal = { c = { fg = colors.fg, bg = colors.bg } },
+          inactive = { c = { fg = colors.fg, bg = colors.bg } },
         },
       },
 
@@ -170,7 +179,7 @@ return {
         lualine_z = {},
       },
 
-      extensions = { 'quickfix', },
+      extensions = { 'quickfix' },
       -- extensions = { extension },
     }
 
