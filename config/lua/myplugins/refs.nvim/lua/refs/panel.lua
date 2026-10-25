@@ -21,9 +21,9 @@ local vim = vim
 -- does, without the list's RefsCurrent on the current one: the cursor on it is mark
 -- enough. Its count shows at the end of its line, as on the list's top line (3/12).
 --
--- The panel is never open empty: it opens with references to show, as <Left>/<Right>
--- land on a symbol, or <leader>r or gf ask for it on one; at start, only if the cursor
--- is on a symbol with references (M.start).
+-- The panel never opens by itself (at start neither): only as <Left>/<Right> land on a
+-- symbol, or <leader>r or gf ask for it on one. It's never open empty: it opens with
+-- references to show.
 --
 -- The panel's windows hold their buffers ('winfixbuf'), and are never all a tab page
 -- holds: when its last code window closes (:bdelete there), a code window takes its
@@ -54,7 +54,6 @@ local KIND_ICONS = {
 -- known) }, see M.show)
 local list = { rows = {}, code = {} }
 local attached = {} -- [buf] = how many servers attached to it so far (see M.attached)
-local start -- the buffer Neovim started in, while the panel waits to know whether to open (see M.start)
 local opening -- the word <leader>r asked for the panel on (see key_of), while the servers answer (see M.toggle)
 local ns = vim.api.nvim_create_namespace('refs.panel')
 local current_ns = vim.api.nvim_create_namespace('refs.current') -- (see mark_current)
@@ -1450,7 +1449,6 @@ end
 -- Open the panel on the right, then show the symbol under the cursor (closed again if
 -- that has no references, unless something else got shown meanwhile, see unshown)
 function M.open()
-  start = nil -- (no longer waiting to open at start)
   if M.is_open() then
     return
   end
@@ -1554,42 +1552,6 @@ function M.toggle()
     end
     open_showing(buf, pos, key, refs)
   end, 'toggle')
-end
-
--- At start (UIEnter), in a file (not a man page, help or a diff): the panel opens if the
--- cursor is on a symbol with references. The servers attach after it, so it's asked as
--- the cursor settles (M.starting) until a server answers about where it rests, or you
--- leave the buffer.
-function M.start()
-  if vim.bo.buftype == '' and not vim.wo.diff and vim.api.nvim_buf_get_name(0) ~= '' then
-    start = vim.api.nvim_get_current_buf()
-    M.starting()
-  end
-end
-
--- The cursor settled, the panel closed: at start, open it if the symbol there has
--- references (see M.start)
-function M.starting()
-  local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
-  if buf ~= start or M.is_open() then
-    start = nil
-    return
-  end
-  local cursor = vim.api.nvim_win_get_cursor(win)
-  local pos = { cursor[1] - 1, cursor[2] }
-  local key = key_of(buf, pos)
-  answers.cancel('start', word_key(buf, pos))
-  answers.ask(buf, pos, 'refs', function(refs)
-    -- (false: no server serving references attached yet; nil: none answered; or you moved
-    -- on. Asked again once one attaches, or where the cursor settles.)
-    if start ~= buf or not refs or not still(win, buf, key) then
-      return
-    elseif holds(refs) then
-      open_showing(buf, pos, key, refs)
-    else
-      start = nil -- (a server's answer of nothing there: the panel stays closed)
-    end
-  end, 'start')
 end
 
 -- Close the panel when the window being quit (QuitPre) is the tab page's last code
@@ -1700,7 +1662,7 @@ end
 
 -- A session is being written (`writing`) or was: the panel's windows are left out of it
 -- (they come back blank otherwise), as 'sessionoptions' without "blank" leaves windows
--- of buffers without a file; it opens anew at start
+-- of buffers without a file
 function M.session(writing)
   if writing and (valid(list.win) or valid(pane.win)) then
     list.ssop = vim.o.sessionoptions
