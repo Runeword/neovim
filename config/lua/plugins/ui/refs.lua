@@ -48,21 +48,14 @@ return {
     },
   },
 
-  -- Loaded at start, as the panel can open then. (A require() wouldn't load it: lazy.nvim
-  -- takes a module's plugin from its path up to the first /lua/, here the config's own.)
+  -- Loaded at start, though the panel never opens by itself (only from the keys above and
+  -- gf): it asks ahead where the cursor settles, so a first hop lands at once, and sees the
+  -- servers attach. (A require(), as gf's and aerial's <Up>/<Down>, wouldn't load it:
+  -- lazy.nvim takes a module's plugin from its path up to the first /lua/, here the
+  -- config's own.)
   lazy = false,
 
   config = function()
     require('refs').setup()
-    -- At start, the panel opens beside the file if the cursor is on a symbol with
-    -- references, once a server can tell (not beside a man page, help or a diff, nor in a
-    -- run without a UI, as headless)
-    vim.api.nvim_create_autocmd('UIEnter', {
-      group = vim.api.nvim_create_augroup('refs_start', { clear = true }),
-      once = true,
-      callback = function()
-        require('refs').start()
-      end,
-    })
   end,
 }
