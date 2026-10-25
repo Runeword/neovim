@@ -6,7 +6,7 @@ return {
   dir = vim.fn.stdpath('config') .. '/lua/myplugins/gl.nvim',
 
   -- Started by the shell's gdc (~/terminal's __git_diff staged runs `GL_OPEN=staged nvim --
-  -- <files>`), Neovim opens in gdc, on the first of the files picked there
+  -- <files>`), Neovim opens in gdc, on the first of the files picked there, at its first change
   init = function()
     local name = vim.env.GL_OPEN
     if not name then
@@ -18,7 +18,7 @@ return {
       callback = function()
         vim.schedule(function() -- (after the file tree, which opens then too: gdc's split under it)
           require('lazy').load({ plugins = { 'gl.nvim' } })
-          require('gl').open(name, { here = true })
+          require('gl').open(name, { from_shell = true })
         end)
       end,
     })
