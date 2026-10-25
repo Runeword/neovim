@@ -42,13 +42,14 @@ vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = highlight
 
 -- The diff's window shows no background but the diff's: neither the treesitter object's under
 -- the cursor (myplugins/grasp.nvim), nor the search's, whose matches are underlined instead
-local quiet = vim.api.nvim_create_namespace('gl.diff.quiet')
-for name, attrs in pairs({
+local QUIET = {
   TreesitterObjectHighlight = {},
   Search = { underline = true },
   CurSearch = { underline = true, bold = true },
   IncSearch = { underline = true, bold = true },
-}) do
+}
+local quiet = vim.api.nvim_create_namespace('gl.diff.quiet')
+for name, attrs in pairs(QUIET) do
   vim.api.nvim_set_hl(quiet, name, attrs)
 end
 
@@ -62,9 +63,48 @@ vim.api.nvim_create_autocmd('WinClosed', {
   end,
 })
 
+-- What only borrows the look of those, a group linked to one (the yank's flash,
+-- vim-highlightedyank's; :s's preview; multicursor's cursors; mini.surround's), keeps its own
+-- there: a link resolves in the window's namespace, so each is defined there too, as it is
+-- everywhere else. Copied again once a colorscheme or a plugin (lazy.nvim's) may have changed
+-- them, at once if a diff shows.
+local borrowers, stale = {}, true
+local function borrow()
+  local all = vim.api.nvim_get_hl(0, {})
+  for name, hl in pairs(all) do
+    local to, seen = hl.link, {}
+    while to and not QUIET[to] and not seen[to] do
+      seen[to] = true
+      to = all[to] and all[to].link
+    end
+    if to and not QUIET[name] then
+      borrowers[name] = true
+    end
+  end
+  for name in pairs(borrowers) do -- (one linked before, and no longer, is still as everywhere else)
+    pcall(vim.api.nvim_set_hl, quiet, name, vim.api.nvim_get_hl(0, { name = name, link = false }))
+  end
+  stale = false
+end
+local function changed()
+  stale = true
+  if next(quieted) then
+    vim.schedule(function()
+      if stale then
+        borrow()
+      end
+    end)
+  end
+end
+vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = changed })
+vim.api.nvim_create_autocmd('User', { group = group, pattern = 'LazyLoad', callback = changed })
+
 -- The window's backgrounds the diff's alone (on), else its own again
 function M.quiet(win, on)
   if on and not quieted[win] then
+    if stale then
+      borrow()
+    end
     quieted[win] = vim.api.nvim_get_hl_ns({ winid = win })
     vim.api.nvim_win_set_hl_ns(win, quiet)
   elseif not on and quieted[win] then
