@@ -207,8 +207,14 @@ vim.keymap.set('n', 'gk', function()
 end, { noremap = true, desc = 'Move up one line + enter char mode' })
 -- Line join (builtin J), rehomed off J beside treesj's <C-j> split/join. Normal mode only:
 -- visual J still joins the selection, and visual / operator-pending <C-k> keep the 4-line
--- jump (below).
-vim.keymap.set('n', '<C-k>', 'J', { noremap = true, desc = 'Join lines' })
+-- jump (below). While the file tree is open, <C-k>/<C-j> go to its previous/next file
+-- instead, from the tree or the code, as <C-Up>/<C-Down> do (myplugins/filetree.nvim; <C-j>
+-- is in treesj.lua). The join is fed, not run with :normal!, so its errors (E21) show as J's.
+vim.keymap.set('n', '<C-k>', function()
+  if not (package.loaded.filetree and require('filetree').step_file(-vim.v.count1)) then
+    vim.api.nvim_feedkeys((vim.v.count > 0 and vim.v.count or '') .. 'J', 'ni', false)
+  end
+end, { desc = 'Previous file in the tree while it is open, else join lines' })
 vim.keymap.set('x', 'k', 'gk')
 vim.keymap.set('x', 'j', 'gj')
 vim.keymap.set('x', '<C-k>', function()
