@@ -185,5 +185,18 @@ return {
 
     -- Now don't forget to initialize lualine
     lualine.setup(config)
+
+    -- A window showing a buffer for the first time (a file opened, each file the file tree
+    -- shows as you walk it) has no status line of its own: lualine sets them per window, and
+    -- Neovim resets a window's local options for a buffer new to it. Until lualine's next
+    -- refresh, ~16 ms on, the line was drawn empty: refresh it now (a float has none).
+    vim.api.nvim_create_autocmd('BufWinEnter', {
+      group = vim.api.nvim_create_augroup('lualine_buf_win_enter', { clear = true }),
+      callback = function()
+        if vim.api.nvim_win_get_config(0).relative == '' then
+          lualine.refresh({ scope = 'window', place = { 'statusline' }, force = true })
+        end
+      end,
+    })
   end,
 }
