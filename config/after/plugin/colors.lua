@@ -86,6 +86,9 @@ local function apply()
   vim.api.nvim_set_hl(0, 'VertSplit', { bg = 'none', fg = '#1e2633' })
   vim.api.nvim_set_hl(0, 'StatusLine', { bg = 'none', fg = 'none' })
   vim.api.nvim_set_hl(0, 'StatusLineNC', { bg = 'none', fg = 'none' })
+  -- lualine's copy of Normal, the colours of an empty status line (see plugins/ui/lualine.lua):
+  -- made at lualine's setup, before Normal loses its background here, it kept the colorscheme's
+  vim.api.nvim_set_hl(0, 'lualine_transparent', { link = 'Normal' })
 
   vim.api.nvim_set_hl(0, 'Error', { bg = 'none', fg = '#cf4e84' })
   vim.api.nvim_set_hl(0, 'ErrorMsg', { bg = 'none', fg = '#cf4e84' })
