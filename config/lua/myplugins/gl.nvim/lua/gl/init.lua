@@ -2,14 +2,15 @@ local vim = vim
 local diff = require('gl.diff')
 
 -- gl, the git log picker of ~/terminal's shell (<Space>gl at an empty prompt), in a split along
--- the bottom, and gdc, its picker of the staged files, the same way. It runs the shell's own
--- function (__git_log, or __git_diff staged, in the shell config's functions/git.bash), so its
--- lists look and work as they do there and change with it: pick a commit, then files of it; or
--- staged files. Its preview, git show or git diff through delta, gives way to the code window
--- showing the file under fzf's cursor (in the commits' list, the commit's first file) as the
--- commit leaves it, or in gdc the file itself, opened as a buffer, with the staged change marked
--- in it (gl.diff). Where the shell opens the files picked in a new Neovim ($EDITOR -- <files>),
--- they open here, as buffers, the first in the code window.
+-- the bottom, and gdc, gdd and gda, its pickers of the files with a staged change, an unstaged
+-- one, or either, the same way. It runs the shell's own function (__git_log, or __git_diff, in
+-- the shell config's functions/git.bash), so its lists look and work as they do there and
+-- change with it: pick a commit, then files of it; or changed files. Its preview, git show or
+-- git diff through delta, gives way to the code window showing the file under fzf's cursor (in
+-- the commits' list, the commit's first file) as the commit leaves it, or in gdc, gdd and gda
+-- the file itself, opened as a buffer, with its change marked in it (gl.diff). Where the shell
+-- opens the files picked in a new Neovim ($EDITOR -- <files>), they open here, as buffers, the
+-- first in the code window. (Below, gdc stands for all three where they work alike.)
 local M = {}
 
 -- zsh -f gives gl the environment of a new shell: xdg.sh, which puts back the
@@ -48,14 +49,19 @@ cmd=$("$@") && [ -n "$cmd" ] && eval "$cmd"
 
 -- The shell's pickers gl runs, by name: the function and its arguments; the field of a row that
 -- names it, as the shell's previews read it (in __git_log's commits, the third, after the row's
--- number and the author and date: the hash; in __git_diff's list, all but the last, the row's
--- number: the path), and of a row of a commit's files, __git_log's second list (all but the
--- first, the tree's drawing: the path); the revision whose files the list shows from the start,
--- if any (gdc's: the index, the staged files); and whether its files open, the work tree's, to
--- edit with the change marked on them (gl.diff), rather than show as a version of theirs (gl's)
+-- number and the author and date: the hash; in __git_diff's list, all but the last three, the
+-- row's change, its author and date and its number: the path), and of a row of a commit's
+-- files, __git_log's second list (all but the first, the tree's drawing: the path); the
+-- revision whose files the list shows from the start, if any (gdc's: the index, the staged
+-- files; gdd's and gda's: the work tree, the files changed since the index, or since HEAD);
+-- whether its files open, the work tree's, to edit with the change marked on them (gl.diff),
+-- rather than show as a version of theirs (gl's); and whether its change starts from the index
+-- (gdd's), which a staging changes: its files then marked again (see watch)
 local TOOLS = {
   log = { cmd = { '__git_log' }, field = '{3}', file_field = '{2..}' },
-  staged = { cmd = { '__git_diff', 'staged' }, field = '{s..-2}', rev = diff.INDEX, edit = true },
+  staged = { cmd = { '__git_diff', 'staged' }, field = '{s..-4}', rev = diff.INDEX, edit = true },
+  unstaged = { cmd = { '__git_diff', 'unstaged' }, field = '{s..-4}', rev = diff.UNSTAGED, edit = true, index = true },
+  changed = { cmd = { '__git_diff' }, field = '{s..-4}', rev = diff.CHANGED, edit = true },
 }
 
 -- The code window's options a change sets (gl.diff: its winbar), given back with it
@@ -272,8 +278,9 @@ local function keys(s, buf)
   end
 end
 
--- The files of the revision (a commit, the index), once per revision (asked again while git
--- lists them, all told at once)
+-- The files of the revision (a commit, the index, the work tree), once per revision (asked again
+-- while git lists them, all told at once); but listed before a new index (see restage), told
+-- and not kept
 local function files(s, rev, cb)
   if s.files[rev] then
     return cb(s.files[rev])
@@ -281,12 +288,13 @@ local function files(s, rev, cb)
     table.insert(s.waiting[rev], cb)
     return
   end
-  s.waiting[rev] = { cb }
+  local waiting, gen = { cb }, s.gen
+  s.waiting[rev] = waiting
   diff.files(s.dir, rev, function(list)
     vim.schedule(function()
-      s.files[rev] = list
-      local waiting = s.waiting[rev]
-      s.waiting[rev] = nil
+      if s.gen == gen then
+        s.files[rev], s.waiting[rev] = list, nil
+      end
       for _, f in ipairs(waiting) do
         f(list)
       end
@@ -350,13 +358,13 @@ local function pump(s)
     end
     -- (in the commits' list, a commit's first file: says of how many)
     local extra = not want.path and #list > 1 and ('  · 1 of %d files'):format(#list) or nil
-    local v = s.versions[file] -- (a staged file's, see launch: shown at once)
+    local v = s.versions[file] -- (gdc's, gdd's, gda's, see fetch: shown at once)
     if v then
       return show(file, v.old, v.new, extra)
     end
     diff.versions(s.dir, want.rev, file, function(old, new)
       vim.schedule(function()
-        if want.rev == diff.INDEX then
+        if s.tool.edit then
           s.versions[file] = { old = old, new = new }
         end
         show(file, old, new, extra)
@@ -405,10 +413,11 @@ local function tell(s, body, cb)
   end)
 end
 
--- The path of a row of gdc's list, as fzf has it: the path, then 0x1f and the row's number (see
--- __git_diff)
+-- The path of a row of __git_diff's list (gdc's, gdd's, gda's), as fzf has it: the path, then
+-- the row's change, its author and date and its number, each after a 0x1f
 local function row_path(row)
-  return type(row) == 'table' and type(row.text) == 'string' and row.text:match('^(.*)\31 *%d+$') or nil
+  return type(row) == 'table' and type(row.text) == 'string' and row.text:match('^(.*)\31[^\31]*\31[^\31]*\31 *%d+$')
+    or nil
 end
 
 -- fzf's cursor to the row of the file at path, if the list shows it (its search may not). For
@@ -448,21 +457,88 @@ local function in_repo(s, b)
   return file and root and file:sub(1, #root + 1) == root .. '/' and file:sub(#root + 2) or nil
 end
 
--- In gdc, a staged file shown in the code window another way than by gl (see launch) gets its
--- change marked, as if picked in the list, whose cursor goes to its row
+-- In gdc, gdd and gda, a file of the list shown in the code window another way than by gl (see
+-- launch) gets its change marked, as if picked in the list, whose cursor goes to its row
 local function follow(s, b)
   local path = in_repo(s, b)
   if not path then
     return
   end
-  files(s, diff.INDEX, function(list)
+  files(s, s.rev, function(list)
     for _, f in ipairs(list) do
       if f.new == path and not s.closed and valid(s.view) and vim.api.nvim_win_get_buf(s.view) == b then
-        ask(s, diff.INDEX, path, b)
+        ask(s, s.rev, path, b)
         point(s, path)
         return
       end
     end
+  end)
+end
+
+-- gdc's, gdd's and gda's files' versions, fetched all at once, each file then marked as it
+-- shows, in the same moment, whatever shows it (see pump); but fetched before a new index (see
+-- restage), not kept
+local function fetch(s)
+  local gen = s.gen
+  files(s, s.rev, function(list)
+    diff.prefetch(s.dir, s.rev, list, function(got)
+      vim.schedule(function()
+        if s.gen ~= gen then
+          return
+        end
+        for file, v in pairs(got) do
+          s.versions[file] = s.versions[file] or v
+        end
+      end)
+    end)
+  end)
+end
+
+-- gdd's change starts from the index: once git writes a new one (a staging, here or anywhere),
+-- its files are listed and fetched again, and the file the code window shows marked again from
+-- it, where it is (its change all staged: no mark left); a file about to show is asked again
+local function restage(s)
+  if s.closed then
+    return
+  end
+  s.gen = s.gen + 1
+  s.files, s.waiting, s.versions = {}, {}, {}
+  fetch(s)
+  local want = s.want
+  if want and want.key ~= s.shown then
+    s.want = nil
+    return ask(s, want.rev, want.path, want.follow)
+  end
+  local b = valid(s.view) and vim.api.nvim_win_get_buf(s.view)
+  local path = b and vim.b[b].gl and in_repo(s, b)
+  if path then
+    s.want, s.shown = nil, nil
+    ask(s, s.rev, path, b)
+  end
+end
+
+-- Watches git's directory for gdd: the index is written as index.lock, then renamed to index;
+-- marked again a moment after the last of a burst
+local function watch(s)
+  vim.system({ 'git', 'rev-parse', '--absolute-git-dir' }, { cwd = s.dir, text = true }, function(r)
+    vim.schedule(function()
+      if s.closed or r.code ~= 0 then
+        return
+      end
+      s.watch, s.watch_timer = vim.uv.new_fs_event(), vim.uv.new_timer()
+      s.watch:start(vim.trim(r.stdout), {}, function(err, name)
+        if not err and name == 'index' then
+          s.watch_timer:stop()
+          s.watch_timer:start(
+            100,
+            0,
+            vim.schedule_wrap(function()
+              restage(s)
+            end)
+          )
+        end
+      end)
+    end)
   end)
 end
 
@@ -493,9 +569,10 @@ end
 -- fzf's word, in its OSC 5379 sequences: that it starts, listing the files of a commit (whose
 -- hash comes with it, else the commit under the cursor when the commits' list closed) or the
 -- commits; that it has all of its list; which row has the cursor (nothing, for none). A list
--- of the index's files (gdc's) stays that. The cursor gl took to a file followed is no pick:
--- that file shows already. Started on a file (s.start, see M.open), the rows the cursor's on
--- aren't shown till it's on that file's, where it goes once the list is all there.
+-- of the index's or the work tree's files (gdc's) stays that. The cursor gl took to a file
+-- followed is no pick: that file shows already. Started on a file (s.start, see M.open), the
+-- rows the cursor's on aren't shown till it's on that file's, where it goes once the list is
+-- all there.
 local function heard(s, sequence)
   local kind, arg = sequence:match('^\27%]5379;gl;(%a+);(.*)')
   if kind == 'load' and s.start then
@@ -651,6 +728,10 @@ local function launch(s)
     if s.rest then
       s.rest:close()
     end
+    if s.watch then
+      s.watch:close()
+      s.watch_timer:close()
+    end
     local paths = picked(file)
     give_back(s)
     -- (the last window, once the others were closed: it shows the code again)
@@ -692,22 +773,15 @@ local function launch(s)
     exited()
     return
   end
-  -- (gdc: the staged files' versions fetched at once, each file then marked as it shows, in the
-  -- same moment, whatever shows it: see pump)
   if s.tool.edit then
-    files(s, s.rev, function(list)
-      diff.prefetch(s.dir, s.rev, list, function(got)
-        vim.schedule(function()
-          for file, v in pairs(got) do
-            s.versions[file] = s.versions[file] or v
-          end
-        end)
-      end)
-    end)
+    fetch(s)
   end
-  -- (gdc on the code window's file: marked at once if staged, in place, the cursor where it is
-  -- (started by the shell, on the file it just opened: on its first change, as gdc's moves take
-  -- it), its row the list's cursor's once fzf has all of the list, see heard)
+  if s.tool.index then
+    watch(s)
+  end
+  -- (gdc on the code window's file: marked at once if in its list, in place, the cursor where it
+  -- is (started by the shell, on the file it just opened: on its first change, as gdc's moves
+  -- take it), its row the list's cursor's once fzf has all of the list, see heard)
   local buf = s.tool.edit and code_window(s.origin) and vim.api.nvim_win_get_buf(s.origin)
   local path = buf and in_repo(s, buf)
   if path then
@@ -728,10 +802,11 @@ local function launch(s)
   end
 end
 
--- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, gdc's. gdc
--- starts on the current window's file, if it's staged: its change marked, the cursor where it is
--- (with opts.from_shell, Neovim started by the shell's gdc on the file, see
--- plugins/minimal/gl.lua: on the change, the file just opened); else on the list's first file.
+-- Opens the shell's picker of the name (see TOOLS): log, gl's, by default; staged, unstaged or
+-- changed: gdc's, gdd's or gda's. These start on the current window's file, if it's in their
+-- list: its change marked, the cursor where it is (with opts.from_shell, Neovim started by the
+-- shell's gdc on the file, see plugins/minimal/gl.lua: on the change, the file just opened);
+-- else on the list's first file.
 -- Open already, it's turned off: closed as q closes it, but a file it shows stays in the window,
 -- its diff gone
 function M.open(name, opts)
@@ -765,6 +840,7 @@ function M.open(name, opts)
 
   local s =
     { dir = dir, root = vim.trim(top.stdout), files = {}, waiting = {}, versions = {}, tool = tool, rev = tool.rev }
+  s.gen = 0 -- (the index's generation, gdd's: see restage)
   s.from_shell = opts and opts.from_shell
   -- The references panel (myplugins/refs.nvim) gives way: closed while gl runs, the diff having
   -- its room, and open again after. gl then starts once the file tree, which steps aside for
