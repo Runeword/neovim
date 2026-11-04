@@ -5,8 +5,9 @@ return {
 
   dir = vim.fn.stdpath('config') .. '/lua/myplugins/gl.nvim',
 
-  -- Started by the shell's gdc (~/terminal's __git_diff staged runs `GL_OPEN=staged nvim --
-  -- <files>`), Neovim opens in gdc, on the first of the files picked there, at its first change
+  -- Started by the shell's gdc, gdd or gda (~/terminal's __git_diff runs `GL_OPEN=<kind> nvim --
+  -- <files>`: staged, unstaged or changed), Neovim opens in it, on the first of the files picked
+  -- there, at its first change
   init = function()
     local name = vim.env.GL_OPEN
     if not name then
@@ -38,6 +39,20 @@ return {
         require('gl').open('staged')
       end,
       desc = "git diff --cached: the shell's gdc picker (~/terminal), on/off",
+    },
+    {
+      '<leader>gdd',
+      function()
+        require('gl').open('unstaged')
+      end,
+      desc = "git diff: the shell's gdd picker (~/terminal), on/off",
+    },
+    {
+      '<leader>gda',
+      function()
+        require('gl').open('changed')
+      end,
+      desc = "git diff HEAD: the shell's gda picker (~/terminal), on/off",
     },
   },
 }
