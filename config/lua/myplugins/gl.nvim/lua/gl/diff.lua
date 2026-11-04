@@ -1,14 +1,14 @@
 local vim = vim
 
--- A file's change in a commit (or staged, in the index) as a one-way diff, in a buffer of the
+-- A file's change in a commit (or uncommitted, see INDEX) as a one-way diff, in a buffer of the
 -- file itself, all of it: the file as the commit leaves it (one the commit deletes, as it was),
 -- with its filetype, so its highlighting. The lines the commit added are on the added-line
 -- background, the ones it removed come back as virtual lines where they were, highlighted as
 -- treesitter would in the file before the commit, on the deleted-line background, and the part
 -- of a changed line that changed is on a brighter one. Code the commit moves is on purple and
 -- blue ones instead, as git's diff.colorMoved marks it and delta paints it in the shell. Each
--- file is a new buffer, wiped once it leaves its window, but a staged one in the work tree
--- (gdc's): that's the file itself, opened (see show).
+-- file is a new buffer, wiped once it leaves its window, but one in the work tree (gdc's, gdd's,
+-- gda's): that's the file itself, opened (see show).
 local M = {}
 
 local ns = vim.api.nvim_create_namespace('gl.diff')
@@ -126,15 +126,61 @@ local shown = {}
 
 -- The index, as a revision: its change is the staged one, from HEAD to it
 M.INDEX = ':'
+-- The work tree, as two revisions: its change from the index, the unstaged one (the shell's
+-- gdd), and from HEAD, both (gda's); a file git doesn't track is new in each
+M.UNSTAGED, M.CHANGED = ':unstaged', ':changed'
+
+-- The revisions that aren't commits, by the shell's word for their change (its kind of path);
+-- and the work tree's, whose text after the change is the file's own (see read)
+local LABEL = { [M.INDEX] = 'staged', [M.UNSTAGED] = 'unstaged', [M.CHANGED] = 'changed' }
+local WORK = { [M.UNSTAGED] = true, [M.CHANGED] = true }
+
+-- The files of the work tree with a change, from the index (UNSTAGED) or from HEAD (CHANGED),
+-- read from git status's list (porcelain, -z: XY, then the path, then a rename's or copy's old
+-- path): the unstaged change is Y; the one since HEAD, X then Y; a file it doesn't track (??) is
+-- new. git status lists both sides of a file taken out of the index (git rm --cached): gone
+-- since HEAD, which comes first, and not tracked.
+local function changes(out, rev)
+  local list, f, i = {}, vim.split(out, '\0', { plain = true }), 1
+  while f[i] and f[i] ~= '' do
+    local x, y, path = f[i]:sub(1, 1), f[i]:sub(2, 2), f[i]:sub(4)
+    local from = (x == 'R' or x == 'C') and f[i + 1] or nil
+    i = i + (from and 2 or 1)
+    if x == '?' then
+      list[#list + 1] = { status = 'A', new = path }
+    elseif x == 'U' or y == 'U' or x == y and (x == 'A' or x == 'D') then
+      list[#list + 1] = { status = 'U', old = path, new = path }
+    elseif rev == M.UNSTAGED then
+      list[#list + 1] = y == 'D' and { status = 'D', old = path }
+        or y == 'A' and { status = 'A', new = path } -- (added with git add -N)
+        or y ~= ' ' and { status = 'M', old = path, new = path }
+        or nil
+    elseif x == 'D' or y == 'D' then -- (unless added since HEAD: then in neither)
+      list[#list + 1] = x ~= 'A' and { status = 'D', old = from or path } or nil
+    elseif x == 'A' then
+      list[#list + 1] = { status = 'A', new = path }
+    else
+      list[#list + 1] = { status = from and x or 'M', old = from or path, new = path }
+    end
+  end
+  return list
+end
 
 -- The files a commit changes, as git show lists them: with renames and copies as git's config
 -- finds them, against the first parent for a merge (as gl's list counts its change); the
--- index's, the staged ones, as git diff --cached lists them. Each is { status = A, C, D, M, R,
--- T or U (unmerged), old = its path before (nil if added), new = after (nil if deleted) }.
+-- index's, the staged ones, as git diff --cached lists them; the work tree's, as git status
+-- does (see changes), which, unlike git diff, never writes the index, even for a file only
+-- touched (gdd would take a new index for a staging, see watch in gl). Each is { status = A,
+-- C, D, M, R, T or U (unmerged), old = its path before (nil if added), new = after (nil if
+-- deleted) }.
 function M.files(dir, rev, cb)
-  local cmd = rev == M.INDEX and { 'git', 'diff', '--cached', '--name-status', '-z' }
+  local cmd = WORK[rev] and { 'git', '--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all' }
+    or rev == M.INDEX and { 'git', 'diff', '--cached', '--name-status', '-z' }
     or { 'git', 'show', '--format=', '--name-status', '-z', '--diff-merges=first-parent', rev }
   vim.system(cmd, { cwd = dir }, function(r)
+    if WORK[rev] then
+      return cb(changes(r.code == 0 and r.stdout or '', rev))
+    end
     local list, f, i = {}, vim.split(r.code == 0 and r.stdout or '', '\0', { plain = true }), 1
     while f[i + 1] do
       local status = f[i]:sub(1, 1)
@@ -152,11 +198,13 @@ function M.files(dir, rev, cb)
 end
 
 -- The file's versions before the change and after it, as git names them: in the commit's parent
--- and the commit, or in HEAD and the index
+-- and the commit, or in HEAD and the index; in the work tree, the index's or HEAD's before it
+-- (the one after it is the file itself, see read)
 local function specs(rev, file)
+  local before = rev == M.UNSTAGED and '' or LABEL[rev] and 'HEAD' or rev .. '^'
   return {
-    old = file.old and (rev == M.INDEX and 'HEAD' or rev .. '^') .. ':' .. file.old,
-    new = file.new and (rev == M.INDEX and '' or rev) .. ':' .. file.new,
+    old = file.old and before .. ':' .. file.old,
+    new = file.new and not WORK[rev] and (rev == M.INDEX and '' or rev) .. ':' .. file.new or nil,
   }
 end
 
@@ -180,13 +228,21 @@ end
 
 -- The texts M.versions gives, of all the files at once: cb({ [file] = { old =, new = } }), from
 -- git's cat-file in two batches (the sizes, then the texts) rather than two processes a file. A
--- file with a version past LARGE isn't there (M.versions gets it, lines says why).
+-- file with a version past LARGE isn't there (M.versions gets it, lines says why); one git keeps
+-- no version of (in the work tree, a file it doesn't track) has none.
 function M.prefetch(dir, rev, list, cb)
-  local wanted = {} -- { file, side, spec }
+  local wanted, got = {}, {} -- { file, side, spec }; the texts, by file
   for _, file in ipairs(list) do
-    for side, spec in pairs(specs(rev, file)) do
+    local versions = specs(rev, file)
+    if next(versions) == nil then
+      got[file] = {}
+    end
+    for side, spec in pairs(versions) do
       wanted[#wanted + 1] = { file = file, side = side, spec = spec }
     end
+  end
+  if #wanted == 0 then
+    return cb(got)
   end
   local function batch(arg, items, done)
     local input = {}
@@ -198,7 +254,7 @@ function M.prefetch(dir, rev, list, cb)
     end)
   end
   batch('--batch-check', wanted, function(out)
-    local got, small, i = {}, {}, 0
+    local small, i = {}, 0
     for line in out:gmatch('[^\n]+') do
       i = i + 1
       local item, size = wanted[i], line:match('^%x+ blob (%d+)$')
@@ -258,6 +314,24 @@ local function lines(text)
     list[i] = l:sub(1, -2)
   end
   return list
+end
+
+-- A file's text in the work tree (a symbolic link's: where it points, as git keeps it), nil if
+-- it has none; one past LARGE only so far as to say so (see lines)
+local function read(path)
+  local stat = vim.uv.fs_lstat(path)
+  if stat and stat.type == 'link' then
+    return vim.uv.fs_readlink(path)
+  elseif not (stat and stat.type == 'file') then
+    return nil
+  end
+  local f = io.open(path, 'rb')
+  if not f then
+    return nil
+  end
+  local text = f:read(LARGE + 1) or ''
+  f:close()
+  return text
 end
 
 -- A line's words, runs of blanks and other characters, with where each starts (0-based)
@@ -644,25 +718,30 @@ function M.release(buf)
 end
 
 -- Shows the file's change in the window (no file: nothing, as for a search matching none), the
--- cursor on its first change, under a winbar with the revision (staged, for the index) and path,
--- what else there is to say about it and extra. map(buf) sets the buffer's keys; ]c and [c go to
--- its next and previous changes. The index's leaves out changes in the amount of white space,
--- as the shell's gdc does (git diff --ignore-space-change).
--- With path, the file in the work tree (gdc's), the change goes on the file itself, its own
--- buffer, to edit with the change in view: from the change's start (old) to the buffer as it is,
--- marked again as it changes, with the staged changes the unstaged ones after them. The file
--- opens as :edit opens it, in the buffer list (a tab in the bufferline, which names it: no
--- winbar), and stays open; once it leaves the window, its marks and gl's keys go (M.release).
+-- cursor on its first change, under a winbar with the revision (staged, unstaged or changed, for
+-- the index and the work tree) and path, what else there is to say about it and extra. map(buf)
+-- sets the buffer's keys; ]c and [c go to its next and previous changes. The index's and the
+-- work tree's leave out changes in the amount of white space, as the shell's gdc, gdd and gda do
+-- (git diff --ignore-space-change).
+-- With path, the file in the work tree (gdc's, gdd's, gda's), the change goes on the file
+-- itself, its own buffer, to edit with the change in view: from the change's start (old: in
+-- HEAD, or in the index for gdd's) to the buffer as it is, marked again as it changes (in gdc's,
+-- the staged changes with the unstaged ones after them). The file opens as :edit opens it, in
+-- the buffer list (a tab in the bufferline, which names it: no winbar), and stays open; once it
+-- leaves the window, its marks and gl's keys go (M.release).
 -- Followed, the file the window shows already, opened another way (the file tree, :edit), is
 -- only marked: in the buffer list or not, as it was opened (a file tree's preview isn't), the
 -- cursor where it was in it. Returns whether it opened (or marked) the file.
 -- Else, or with no such file (deleted, binary, too large), it's a new buffer of the version,
 -- wiped once it leaves its window; but a file followed is left as it is.
 function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
-  local staged = rev == M.INDEX
-  local label = staged and 'staged' or rev
+  local own = LABEL[rev] ~= nil -- (the index's or the work tree's change, not a commit's)
+  local label = LABEL[rev] or rev
   local f = file or {}
   local deleted = f.old and not f.new
+  if WORK[rev] and path and f.new then -- (its text after the change: the file's, as it is now)
+    new_text = read(path)
+  end
   local old, why_old = lines(old_text)
   local new, why_new = lines(new_text)
   local why = f.status == 'U' and 'unmerged' or why_new or why_old
@@ -757,7 +836,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
   local body = deleted and old or new
   local ft = real and vim.bo[buf].filetype or name and vim.filetype.match({ filename = name, contents = body })
   if name and not real then
-    pcall(vim.api.nvim_buf_set_name, buf, ('gl://%s%s/%s'):format(label, deleted and not staged and '^' or '', name))
+    pcall(vim.api.nvim_buf_set_name, buf, ('gl://%s%s/%s'):format(label, deleted and not own and '^' or '', name))
     -- (FileType in the window: the treesitter hook highlights the rows it shows)
     if ft then
       vim.api.nvim_win_call(win, function()
@@ -771,7 +850,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
   local rows = { 1 } -- (an added or deleted file: all of it)
   if real then
     vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-    rows = mark(buf, old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), old_ft, staged)
+    rows = mark(buf, old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), old_ft, own)
   elseif not file or why then
     rows = {}
   elseif deleted or not f.old then
@@ -779,7 +858,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
       line(buf, r, deleted and 'GlDiffDelete' or 'GlDiffAdd')
     end
   else
-    rows = mark(buf, old, new, old_ft, staged)
+    rows = mark(buf, old, new, old_ft, own)
   end
 
   if not real then
@@ -787,7 +866,9 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
     local text = file and (' %s  %s%s%s'):format(label, name, say and '  (' .. say .. ')' or '', extra or '') or ''
     vim.api.nvim_set_option_value('winbar', (text:gsub('%%', '%%%%')), { win = win, scope = 'local' })
   end
-  shown[buf] = { rows = rows, real = real }
+  -- (with the change's start, which a file marked again in place may get anew: gdd's, as the
+  -- index changes)
+  shown[buf] = { rows = rows, real = real, old = old, ft = old_ft, own = own }
 
   -- Marked again a moment after each change (as gitsigns does)
   if real and #real.autocmds == 0 then
@@ -797,7 +878,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
         return
       end
       vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-      m.rows = mark(buf, old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), old_ft, staged)
+      m.rows = mark(buf, m.old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), m.ft, m.own)
     end
     real.autocmds = {
       vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
