@@ -345,11 +345,11 @@ local function tokens(s)
   return list, starts
 end
 
--- The background of the buffer's row (1-based), to the window's edge. Not a line_hl_group: that
--- one covers the changed part's brighter one, whatever their priorities.
-local function line(buf, row, hl)
-  local opts = { end_row = row, end_col = 0, hl_group = hl, hl_eol = true, priority = LINE }
-  vim.api.nvim_buf_set_extmark(buf, ns, row - 1, 0, opts)
+-- The background of the buffer's row (1-based), to the window's edge: its extmark's row, column
+-- and options. Not a line_hl_group: that one covers the changed part's brighter one, whatever
+-- their priorities.
+local function line(row, hl)
+  return row - 1, 0, { end_row = row, end_col = 0, hl_group = hl, hl_eol = true, priority = LINE }
 end
 
 local function joined(list)
@@ -526,17 +526,45 @@ local function moves(old, new, hunks)
   return moved
 end
 
+-- The parsers of the versions highlighted last (see syntax), by text and language, the last used
+-- first: a version highlighted again (its file marked again as it changes, or switched back to
+-- once changed) is parsed only where its parse from then lacks. Parsed all again each time, a
+-- version of the shell's git.bash took 25 ms, one of its wrappers/zsh.nix (whose shell code is
+-- one injection) 200.
+local PARSERS = 8
+local parsers = {}
+local function parser_of(text, lang)
+  for i, p in ipairs(parsers) do
+    if p.text == text and p.lang == lang then
+      table.insert(parsers, 1, table.remove(parsers, i))
+      return p.parser
+    end
+  end
+  local ok, parser = pcall(vim.treesitter.get_string_parser, text, lang)
+  if not ok then -- (no parser for it)
+    return nil
+  end
+  table.insert(parsers, 1, { text = text, lang = lang, parser = parser })
+  parsers[PARSERS + 1] = nil
+  return parser
+end
+
 -- The highlights treesitter gives the rows (0-based, { first, last } ranges) of a version of a
 -- file of the filetype, as its highlighter would in a buffer of it: by row, by byte (1-based),
 -- the capture's group and priority (the higher one's over a byte, else the later one's)
 local function syntax(list, ft, ranges)
   local out, text = {}, joined(list)
   local lang = ft and ranges[1] and vim.treesitter.language.get_lang(ft)
-  local ok, parser = pcall(vim.treesitter.get_string_parser, text, lang)
-  if not (lang and ok) then -- (no parser for it)
+  local parser = lang and parser_of(text, lang)
+  if not parser then
     return out
   end
-  parser:parse(#text <= 256 * 1024 or nil) -- (a large file's injections aside)
+  -- (of the injections, only those over the rows, all it highlights; a large file's, none)
+  local spans = {}
+  for i, range in ipairs(ranges) do
+    spans[i] = { range[1], 0, range[2] + 1, 0 }
+  end
+  parser:parse(#text <= 256 * 1024 and spans or nil)
   parser:for_each_tree(function(tree, ltree)
     local query = vim.treesitter.query.get(ltree:lang(), 'highlights')
     for _, range in ipairs(query and ranges or {}) do
@@ -606,9 +634,14 @@ local function virtual(text, parts, tabstop, syn, bg)
 end
 
 -- Marks the change from old (of the filetype) to new in the buffer (holding new), with space
--- not where only the amount of white space changes; returns the rows of its changes
+-- not where only the amount of white space changes; returns the rows of its changes, and the
+-- marks (each extmark's row, column and options)
 local function mark(buf, old, new, ft, space)
-  local rows = {}
+  local rows, marks = {}, {}
+  local function put(row, col, opts)
+    marks[#marks + 1] = { row, col, opts }
+    vim.api.nvim_buf_set_extmark(buf, ns, row, col, opts)
+  end
   local hunks = vim.text.diff(joined(old), joined(new), {
     result_type = 'indices',
     algorithm = 'histogram',
@@ -626,7 +659,7 @@ local function mark(buf, old, new, ft, space)
   for _, h in ipairs(hunks) do
     local sa, ca, sb, cb = unpack(h)
     for r = sb, sb + cb - 1 do
-      line(buf, r, MOVED_HL.new[moved.new[r]] or 'GlDiffAdd')
+      put(line(r, MOVED_HL.new[moved.new[r]] or 'GlDiffAdd'))
     end
     -- Each removed line with the first alike of the next three added ones, moved ones aside (as
     -- git and delta show them: moved, not changed)
@@ -648,11 +681,7 @@ local function mark(buf, old, new, ft, space)
         if po then
           parts[i] = po
           for _, p in ipairs(pn) do
-            vim.api.nvim_buf_set_extmark(buf, ns, news[j] - 1, p[1], {
-              end_col = p[2],
-              hl_group = 'GlDiffAddText',
-              priority = TEXT,
-            })
+            put(news[j] - 1, p[1], { end_col = p[2], hl_group = 'GlDiffAddText', priority = TEXT })
           end
           k = j + 1
           break
@@ -668,14 +697,39 @@ local function mark(buf, old, new, ft, space)
         local bg = MOVED_HL.old[moved.old[i]] or 'GlDiffDelete'
         virt[#virt + 1] = virtual(old[i], parts[i], vim.bo[buf].tabstop, syn[i - 1], bg)
       end
-      vim.api.nvim_buf_set_extmark(buf, ns, row - 1, 0, {
-        virt_lines = virt,
-        virt_lines_above = cb > 0 or sb == 0,
-        virt_lines_overflow = 'scroll',
-      })
+      put(row - 1, 0, { virt_lines = virt, virt_lines_above = cb > 0 or sb == 0, virt_lines_overflow = 'scroll' })
     end
     rows[#rows + 1] = row
   end
+  return rows, marks
+end
+
+-- By buffer of a file marked in place (see show): its marks as mark made them last, and what
+-- from (the buffer's changedtick, the old version, how it was marked). Shown again unchanged
+-- (switched back to), the file gets them back as they were: making them again took up to 30 ms
+-- a switch, for a file changed in many places.
+local made = {}
+vim.api.nvim_create_autocmd('BufWipeout', {
+  group = group,
+  callback = function(args)
+    made[args.buf] = nil
+  end,
+})
+
+-- Marks the change in the buffer of a file in the work tree, as mark does, from the old version
+-- (its text and lines) to the buffer's lines
+local function mark_file(buf, text, old, ft, space)
+  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  local tick, tabstop = vim.api.nvim_buf_get_changedtick(buf), vim.bo[buf].tabstop
+  local m = made[buf]
+  if m and m.tick == tick and m.text == text and m.ft == ft and m.space == space and m.tabstop == tabstop then
+    for _, x in ipairs(m.marks) do
+      vim.api.nvim_buf_set_extmark(buf, ns, x[1], x[2], x[3])
+    end
+    return m.rows
+  end
+  local rows, marks = mark(buf, old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), ft, space)
+  made[buf] = { tick = tick, text = text, ft = ft, space = space, tabstop = tabstop, marks = marks, rows = rows }
   return rows
 end
 
@@ -849,13 +903,12 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
   local old_ft = f.old and vim.filetype.match({ filename = f.old, contents = old }) or ft
   local rows = { 1 } -- (an added or deleted file: all of it)
   if real then
-    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-    rows = mark(buf, old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), old_ft, own)
+    rows = mark_file(buf, old_text, old, old_ft, own)
   elseif not file or why then
     rows = {}
   elseif deleted or not f.old then
     for r = 1, #body do
-      line(buf, r, deleted and 'GlDiffDelete' or 'GlDiffAdd')
+      vim.api.nvim_buf_set_extmark(buf, ns, line(r, deleted and 'GlDiffDelete' or 'GlDiffAdd'))
     end
   else
     rows = mark(buf, old, new, old_ft, own)
@@ -868,7 +921,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
   end
   -- (with the change's start, which a file marked again in place may get anew: gdd's, as the
   -- index changes)
-  shown[buf] = { rows = rows, real = real, old = old, ft = old_ft, own = own }
+  shown[buf] = { rows = rows, real = real, text = old_text, old = old, ft = old_ft, own = own }
 
   -- Marked again a moment after each change (as gitsigns does)
   if real and #real.autocmds == 0 then
@@ -877,8 +930,7 @@ function M.show(win, rev, file, old_text, new_text, extra, map, path, followed)
       if not (m and vim.api.nvim_buf_is_valid(buf)) then
         return
       end
-      vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-      m.rows = mark(buf, m.old, vim.api.nvim_buf_get_lines(buf, 0, -1, false), m.ft, m.own)
+      m.rows = mark_file(buf, m.text, m.old, m.ft, m.own)
     end
     real.autocmds = {
       vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
