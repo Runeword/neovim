@@ -61,7 +61,22 @@ return {
       return vim.tbl_deep_extend('force', default_opts, override_opts or {})
     end
 
-    vim.lsp.config('lua_ls', set_config())
+    -- lua_ls only knows Neovim's API (the type stubs in $VIMRUNTIME/lua/vim/_meta) when the
+    -- runtime is a workspace library; without it every `vim` is an undefined global.
+    vim.lsp.config(
+      'lua_ls',
+      set_config({
+        settings = {
+          Lua = {
+            runtime = { version = 'LuaJIT' },
+            workspace = {
+              library = { vim.env.VIMRUNTIME },
+              checkThirdParty = false,
+            },
+          },
+        },
+      })
+    )
     vim.lsp.enable('lua_ls')
     vim.lsp.config('yamlls', set_config())
     vim.lsp.enable('yamlls')
