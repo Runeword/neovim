@@ -28,7 +28,7 @@ return {
           gs.toggle_current_line_blame,
           { buffer = buffer, desc = 'git blame' }
         )
-        -- (on <leader>gD: <leader>gd starts gl.nvim's <leader>gdc, the shell's gdc)
+        -- (on <leader>gD: <leader>gd starts gl.nvim's <leader>gdc)
         vim.keymap.set({ 'n', 'x' }, '<leader>gD', gs.toggle_deleted, { buffer = buffer })
         vim.keymap.set({ 'n', 'x' }, '<C-g>', function()
           gs.nav_hunk('next', { target = 'all' })
