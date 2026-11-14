@@ -158,11 +158,11 @@ vim.keymap.set('i', '<M-k>', '<C-k>')
 -- -- one tap jumps, with no delay and no burst detection. A numeric count opts out: [n]j
 -- / [n]k moves a literal n lines (so relativenumber jumps like 5j work) AND arms the
 -- sticky "char mode" submode, so the follow-up j/k fine-tune one line at a time -- the
--- same submode that w/b/e/h/l/n/... and J/K (gj/gk) arm (see the sticky-motion section in
--- functions.lua). The 4-line jump used to route through <C-j>/<C-k>, but <C-j> now triggers
--- treesj (see treesj.lua) and <C-k> joins lines, so it lives on j/k here. In visual and
--- operator-pending, j/k stay ordinary single-line motions (vj / dj / cj move one line) while
--- <C-j>/<C-k> keep the 4-line jump.
+-- same submode that w/b/e/h/l/n/... arm, and <C-j>/<C-k> toggle (see the sticky-motion section
+-- in functions.lua). The 4-line jump used to route through <C-j>/<C-k>, but they now
+-- toggle char mode (below), so it lives on j/k here. In visual and operator-pending, j/k stay
+-- ordinary single-line motions (vj / dj / cj move one line) while <C-j>/<C-k> keep the
+-- 4-line jump.
 vim.keymap.set('n', 'k', function()
   if is_quickfix_open() then
     quickfix_nav('cprevious', 'clast')
@@ -187,30 +187,27 @@ vim.keymap.set('n', 'j', function()
     require('functions').move_to_non_empty_line(4)
   end
 end, { noremap = true, desc = 'Quickfix next, else [count] lines down + char mode, else jump down 4 lines' })
--- J/K: the one-keystroke precise move beside j/k's jump -- step one line (real lines,
--- skipping hidden-comment lines), then arm the sticky "char mode" submode just like
--- w/e/b/... -- so after J/K, j/k keep stepping one line until you leave (Esc, or a rapid
--- jj/kk). gj/gk do the same (the older two-key spelling). All four sit in STICKY_ENTRY, so
--- armStickyEntry (on VeryLazy) captures these jkStep maps and re-wraps each to also arm
--- the submode. A global K also keeps LSP from mapping K to hover (hover lives on gh).
-vim.keymap.set('n', 'J', function()
-  require('functions').jkStep('j')
-end, { noremap = true, desc = 'Move down one line + enter char mode' })
-vim.keymap.set('n', 'K', function()
-  require('functions').jkStep('k')
-end, { noremap = true, desc = 'Move up one line + enter char mode' })
-vim.keymap.set('n', 'gj', function()
-  require('functions').jkStep('j')
-end, { noremap = true, desc = 'Move down one line + enter char mode' })
-vim.keymap.set('n', 'gk', function()
-  require('functions').jkStep('k')
-end, { noremap = true, desc = 'Move up one line + enter char mode' })
--- Line join (builtin J), rehomed off J beside treesj's <C-j> split/join. Normal mode only:
--- visual J still joins the selection, and visual / operator-pending <C-k> keep the 4-line
--- jump (below). While the file tree is open, <C-k>/<C-j> go to its previous/next file
--- instead, from the tree or the code, as <C-Up>/<C-Down> do (myplugins/filetree.nvim; <C-j>
--- is in treesj.lua). The join is fed, not run with :normal!, so its errors (E21) show as J's.
+-- J/K are Vim's own: J joins lines, K looks up the word ('keywordprg', or LSP hover where a
+-- server is attached, as gh does).
+-- <C-j>/<C-k>: the first of a Ctrl hold toggles char mode -- on, j/k step one line; off
+-- again, j/k jump -- and every press moves a step in the mode now on, as j/k do, the way
+-- ctrl-j/k switch and move in the shell's fzf pickers. The ones after the first, Ctrl still
+-- down, don't toggle again (see functions.stickyCtrl). In a list with j/k of its own, they're
+-- its j/k. (They took over from gj/gk, which stepped one line into char mode: gj/gk now
+-- split/join, below.)
+vim.keymap.set('n', '<C-j>', function()
+  require('functions').stickyCtrl('j')
+end, { desc = 'Toggle char mode (first of a Ctrl hold), then j' })
 vim.keymap.set('n', '<C-k>', function()
+  require('functions').stickyCtrl('k')
+end, { desc = 'Toggle char mode (first of a Ctrl hold), then k' })
+-- gk: line join (builtin J, as J does too) beside treesj's gj split/join -- both moved off
+-- <C-k>/<C-j> for the char-mode toggle above, onto gk/gj (whose builtin display-line moves
+-- are plain k/j with 'nowrap'). Normal mode only: visual j/k keep the builtin gj/gk. While
+-- the file tree is open, gk/gj go to its previous/next file instead, from the tree or the
+-- code, as <C-Up>/<C-Down> do (myplugins/filetree.nvim; gj is in treesj.lua). The join is
+-- fed, not run with :normal!, so its errors (E21) show as J's.
+vim.keymap.set('n', 'gk', function()
   if not (package.loaded.filetree and require('filetree').step_file(-vim.v.count1)) then
     vim.api.nvim_feedkeys((vim.v.count > 0 and vim.v.count or '') .. 'J', 'ni', false)
   end
@@ -235,10 +232,10 @@ vim.keymap.set('o', '<C-j>', function()
 end, { noremap = true })
 
 -- Sticky hjkl navigation submode (native replacement for the old hydra 'scroll'
--- hydra): a broad set of motions (h l w b e W B E ge J K gj gk $ ^ n N ; , . * #, see
--- STICKY_ENTRY) enters it -- keeping each key's own behaviour. While active,
--- h/j/k/l move one step, every other key works as usual, and <Esc> exits (or
--- mashing j/k -- a rapid jj/kk/jk/kj double-tap). See functions.armStickyEntry.
+-- hydra): a broad set of motions (h l w b e W B E ge $ ^ n N ; , . * #, see
+-- STICKY_ENTRY) enters it -- keeping each key's own behaviour -- and <C-j>/<C-k> toggle it
+-- (above). While active, h/j/k/l move one step, however fast, every other key works as
+-- usual, and <Esc> exits. See functions.armStickyEntry.
 -- Install the entry-motion wrappers AFTER plugins (spider, asterisk, ...) set
 -- their own maps, so armStickyEntry captures and preserves the live mappings.
 vim.api.nvim_create_autocmd('User', {
