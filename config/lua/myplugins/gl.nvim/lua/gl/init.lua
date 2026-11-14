@@ -310,8 +310,8 @@ local step -- (below)
 
 -- The diff's buffer (a version's, gl.diff makes one each time; in gdc, the file's own, while
 -- it's shown): q closes gl, <CR> opens the file, <C-j>/<C-k> take the list's cursor to its
--- next/previous row, the diff following it while the cursor stays here, for j and k (join and
--- treesj wait meanwhile; visual and operator-pending <C-j>/<C-k> keep their jumps)
+-- next/previous row, the diff following it while the cursor stays here, for j and k (the
+-- char-mode toggle waits meanwhile; visual and operator-pending <C-j>/<C-k> keep their jumps)
 local function keys(s, buf)
   vim.b[buf].gl = true
   vim.keymap.set('n', 'q', function()
