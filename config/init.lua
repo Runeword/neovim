@@ -34,7 +34,7 @@ local lazy_opts = {
         'matchit',
         'matchparen',
         'netrwPlugin',
-        'tarPlugin',
+        -- not 'tarPlugin': without it a .tar opens as raw bytes, which is slow
         'tohtml',
         'tutor',
         'zipPlugin',
