@@ -15,9 +15,9 @@ return {
       use_default_keymaps = false,
     })
 
-    -- While the file tree is open, <C-j> goes to its next file instead, from the tree or the
-    -- code, as <C-Down> does (myplugins/filetree.nvim; <C-k> is in mappings.lua)
-    vim.keymap.set('n', '<C-j>', function()
+    -- While the file tree is open, gj goes to its next file instead, from the tree or the
+    -- code, as <C-Down> does (myplugins/filetree.nvim; gk is in mappings.lua)
+    vim.keymap.set('n', 'gj', function()
       if not (package.loaded.filetree and require('filetree').step_file(vim.v.count1)) then
         treesj.toggle()
       end
