@@ -395,13 +395,6 @@ local function jk_step(dir)
   end
 end
 
--- Public one-line step, exposed for J/K and gj/gk (see mappings.lua): a deliberate single
--- line for when you want to opt out of j/k's default 4-line jump. Shares jk_step's hidden-
--- comment skipping, so it stays on the movement flow exactly like the sticky submode.
-function M.jkStep(dir)
-  jk_step(dir)
-end
-
 -------------------- Sticky motion
 
 -- Sticky hjkl navigation submode -- a dependency-free replacement for the old
@@ -414,28 +407,21 @@ end
 -- command, so `fw`, `rw`, `"wp` etc. -- where the letter is an argument -- do NOT
 -- trip it, and each key's existing plugin behaviour (spider w/b/e, asterisk */#,
 -- the custom `,` search, ...) is preserved by capturing and re-invoking its
--- original mapping.
+-- original mapping. <C-j>/<C-k> toggle it instead, the first of a Ctrl hold, then move a
+-- step in it (M.stickyCtrl).
 --
--- Leaving: <Esc> (an on_key watcher, live only while active), or mashing
--- j/k -- a rapid jj/kk/jk/kj (the second tap within RAPID_MS of the first) does its
--- step and then drops out. It is all non-blocking, so the cursor stays visible (cf.
--- the getcharstr "busy" cursor bug, neovim/neovim#20793).
+-- Leaving: <C-j>/<C-k> again (a new Ctrl hold), or <Esc> (an on_key watcher, live only
+-- while active). It is all non-blocking, so the cursor stays visible (cf. the getcharstr
+-- "busy" cursor bug, neovim/neovim#20793).
 local STICKY_KEYS = { 'h', 'j', 'k', 'l' } -- one-step moves while active
--- Motions that enter the submode (wrapped by armStickyEntry). `ge`/`gj`/`gk` are two-key
--- motions; J/K and gj/gk carry their own jkStep mapping (mappings.lua) that armStickyEntry
--- captures, so their single-line step survives the entry wrap.
-local STICKY_ENTRY =
-  { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', 'J', 'K', 'gj', 'gk', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
+-- Motions that enter the submode (wrapped by armStickyEntry). `ge` is a two-key motion. (Not
+-- <C-j>/<C-k>: the wrap would arm it again right after they toggle it off.)
+local STICKY_ENTRY = { 'h', 'l', 'w', 'b', 'e', 'W', 'B', 'E', 'ge', '$', '^', 'n', 'N', ';', ',', '.', '*', '#' }
 local STICKY_ESC = vim.keycode('<Esc>')
--- "Rapid burst" gap (ms): the largest pause between two j/k taps for them to count as
--- mashed rather than deliberate. Used by the sticky submode -- a rapid jj/kk/jk/kj
--- leaves it. Lower = must mash faster.
-local RAPID_MS = 100
 local sticky_ns = vim.api.nvim_create_namespace('sticky_motion')
 local sticky_active = false
 local sticky_armed = false
 local sticky_buf = nil -- the buffer whose hjkl the submode maps while active
-local sticky_rapid_last = 0 -- vim.uv.now() of the previous j/k tap while active (rapid-exit)
 
 local function sticky_stop()
   if not sticky_active then
@@ -451,6 +437,16 @@ local function sticky_stop()
   sticky_buf = nil
 end
 
+-- The current buffer has hjkl of its own (a plugin's list, as the refs panel's j/k)
+local function own_hjkl()
+  for _, key in ipairs(STICKY_KEYS) do
+    if vim.fn.maparg(key, 'n', false, true).buffer == 1 then
+      return true
+    end
+  end
+  return false
+end
+
 local function sticky_start()
   local buf = vim.api.nvim_get_current_buf()
   if sticky_active then
@@ -459,34 +455,22 @@ local function sticky_start()
     end
     sticky_stop() -- (armed in another buffer: the submode moves on to this one)
   end
-  -- Not in a buffer with hjkl of its own (a plugin's list, as the refs panel's j/k): the
-  -- submode's maps would replace them, then delete them on leaving
-  for _, key in ipairs(STICKY_KEYS) do
-    if vim.fn.maparg(key, 'n', false, true).buffer == 1 then
-      return
-    end
+  -- Not in a buffer with hjkl of its own: the submode's maps would replace them, then
+  -- delete them on leaving
+  if own_hjkl() then
+    return
   end
   sticky_active = true
   sticky_buf = buf
-  sticky_rapid_last = 0 -- fresh burst window, so the first j/k tap is never "rapid"
   -- Buffer-local hjkl (shadowing j/k's 4-line jump and default h/l) do the moves;
   -- deleting them on exit restores the originals. j/k step one line (via jk_step, which
-  -- skips hidden-comment lines) and watch for a rapid burst: a second j/k within
-  -- RAPID_MS (jj/kk/jk/kj) does its step and then leaves the submode, so a quick mash
-  -- escapes it. h/l move but break the j/k burst chain.
+  -- skips hidden-comment lines), however fast they come; h/l one column.
   for _, key in ipairs(STICKY_KEYS) do
     vim.keymap.set('n', key, function()
       if key == 'j' or key == 'k' then
         jk_step(key)
-        local now = vim.uv.now()
-        local rapid = now - sticky_rapid_last <= RAPID_MS
-        sticky_rapid_last = now
-        if rapid then
-          sticky_stop() -- rapid jj/kk/jk/kj -> leave the submode
-        end
       else
         vim.cmd('normal! ' .. key) -- h / l: one-step horizontal move
-        sticky_rapid_last = 0 -- h / l break the j/k burst chain
       end
     end, { buffer = sticky_buf, desc = 'Sticky motion: ' .. key })
   end
@@ -499,10 +483,78 @@ local function sticky_start()
 end
 
 -- Public entry to the submode for callers that do their own motion first, then want char
--- mode armed -- e.g. a counted [n]j/[n]k in mappings.lua, matching how w/e/b/gj/gk arm it.
+-- mode armed -- e.g. a counted [n]j/[n]k in mappings.lua, matching how w/e/b/... arm it.
 -- Idempotent (sticky_start no-ops when already active).
 function M.stickyStart()
   sticky_start()
+end
+
+-- What `key` does in normal mode now: its mapping (the callback, or the rhs fed as typed),
+-- else the builtin key
+local function mapped(key)
+  local map = vim.fn.maparg(key, 'n', false, true)
+  if map.callback then
+    return map.callback
+  elseif type(map.rhs) == 'string' and map.rhs ~= '' then
+    local keys, remap = vim.keycode(map.rhs), map.noremap == 1 and 'n' or 'm'
+    return function()
+      vim.api.nvim_feedkeys(keys, remap, false)
+    end
+  end
+  return function()
+    vim.cmd('normal! ' .. key)
+  end
+end
+
+-- <C-j>/<C-k> (mappings.lua), Ctrl held down: the first press toggles the submode (on in
+-- this buffer, or off when it's on here), and every press then moves a step in the mode now
+-- on, as j/k do -- a line, or j/k's own move -- as ctrl-j/k switch the step and move in the
+-- shell's fzf pickers (FZF_DEFAULT_OPTS). The ones after the first, Ctrl still down, never
+-- toggle again. In a list with j/k of its own (the refs panel, the file tree), they're
+-- those j/k. A terminal doesn't tell Neovim when Ctrl goes up, so "still
+-- down" is read off the keys: this <C-j>/<C-k> right after the last one, no other key typed
+-- between, and within HOLD_MS of it.
+-- HOLD_MS (ms): the longest pause between two <C-j>/<C-k> of one Ctrl hold. Well above the
+-- keyboard's repeat delay (Hyprland's repeat_delay = 200), so holding <C-j> down repeats its
+-- move rather than toggling again. Higher = slower taps still make one hold, but so does
+-- letting go of Ctrl and pressing again that soon (with no other key between).
+local HOLD_MS = 600
+local hold_ns = vim.api.nvim_create_namespace('sticky_hold')
+local typed_n -- keys typed so far, counted (by an on_key watcher) from the first <C-j>/<C-k> on
+local hold_n, hold_last = 0, 0 -- typed_n and vim.uv.now() at the last <C-j>/<C-k>
+
+function M.stickyCtrl(dir)
+  if not typed_n then
+    typed_n = 0
+    vim.on_key(function(_, typed)
+      if typed ~= '' then -- (the keys of mappings and :normal come untyped)
+        typed_n = typed_n + 1
+      end
+    end, hold_ns)
+  end
+  local now = vim.uv.now()
+  local held = typed_n == hold_n + 1 and now - hold_last <= HOLD_MS
+  hold_n, hold_last = typed_n, now
+  local buf = vim.api.nvim_get_current_buf()
+  local function on()
+    return sticky_active and sticky_buf == buf
+  end
+  if not on() and own_hjkl() then
+    mapped(dir)() -- a list: its own j/k
+    return
+  end
+  if not held then
+    if on() then
+      sticky_stop()
+    else
+      sticky_start() -- (on in another buffer: it moves on to this one)
+    end
+  end
+  if on() then
+    jk_step(dir)
+  else
+    mapped(dir)() -- j/k's own move: the 4-line jump, quickfix nav when it's open
+  end
 end
 
 -- Wrap every STICKY_ENTRY motion so it runs its current behaviour and then arms
@@ -515,20 +567,7 @@ function M.armStickyEntry()
   end
   sticky_armed = true
   for _, key in ipairs(STICKY_ENTRY) do
-    local orig = vim.fn.maparg(key, 'n', false, true)
-    local run
-    if orig.callback then
-      run = orig.callback
-    elseif type(orig.rhs) == 'string' and orig.rhs ~= '' then
-      local keys, remap = vim.keycode(orig.rhs), orig.noremap == 1 and 'n' or 'm'
-      run = function()
-        vim.api.nvim_feedkeys(keys, remap, false)
-      end
-    else
-      run = function()
-        vim.cmd('normal! ' .. key)
-      end
-    end
+    local run = mapped(key)
     vim.keymap.set('n', key, function()
       run()
       sticky_start()
