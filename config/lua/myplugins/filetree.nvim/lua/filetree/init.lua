@@ -17,7 +17,7 @@ local vim = vim
 -- goes to its first entry), or shows the file in the code
 -- window, staying in the panel; h/<Left> closes the directory, else goes to its parent;
 -- - closes the directory holding the entry; W closes them all; R reads the disk again;
--- q closes the panel. There and in the code window, <C-Down>/<C-Up> and <C-j>/<C-k> go to the
+-- q closes the panel. There and in the code window, <C-Down>/<C-Up> and gj/gk go to the
 -- next/previous file, past the directories, showing it as j/k do (see M.step_file).
 --
 -- The panel holds its buffer ('winfixbuf') and is never all a tab page holds: when the last
@@ -624,7 +624,7 @@ end
 
 local walked -- the panel's line M.step_file put its cursor on last
 
--- <C-Down>/<C-Up> (with no window below/above, see mappings.lua) and <C-j>/<C-k> (before
+-- <C-Down>/<C-Up> (with no window below/above, see mappings.lua) and gj/gk (before
 -- treesj's and join's, see treesj.lua and mappings.lua), in the panel or the code window: the
 -- panel's cursor on the `n`th file on (back, n < 0), past the directories, shown in the code
 -- window as j/k show it, a preview kept once it's moved in (see setup); false if the panel
