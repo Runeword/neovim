@@ -214,10 +214,22 @@ local function give_back(s)
   diff.release(shown)
 end
 
+-- Neovim with nothing open but gl: no buffer listed that has a name (a file, a terminal) or
+-- changes
+local function idle()
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.bo[b].buflisted and (vim.api.nvim_buf_get_name(b) ~= '' or vim.bo[b].modified) then
+      return false
+    end
+  end
+  return true
+end
+
 -- Closes gl: the code window given back (see give_back), the list's window closed (the last
 -- window: it shows the code instead), and the files picked opened (gl's, from a commit's), else
 -- the file at the diff's line (see jump); the cursor back where gl started, but turned off from
--- a window, there
+-- a window, there. Started by the shell's gl on the diff alone (s.path, see M.open), with no
+-- file opened since, Neovim quits instead, back to the shell, as a pager does.
 local function close(s)
   if s.closed then
     return
@@ -253,6 +265,12 @@ local function close(s)
   end
   if s.refs then
     s.refs.open()
+  end
+  if s.from_shell and s.path and not (s.picked or s.jump) and idle() then
+    local ok, err = pcall(vim.cmd.qall)
+    if not ok then
+      vim.notify('gl: ' .. err, vim.log.levels.WARN)
+    end
   end
 end
 
@@ -859,8 +877,8 @@ end
 -- gl in its split, for the session s (its list, its directory and repository root, its files'
 -- cache, the references panel to open again after), the cursor in its list; but gdc's stays on
 -- the code, where its files open to edit (the first: see pump), as gl's on a commit does
--- (s.commit, the files the shell's gl opens), where the first one's change shows: the list
--- below (<C-Down>), moved from there with <C-j>/<C-k>
+-- (s.commit, the shell's gl, on the file picked there), where its change shows: the list below
+-- (<C-Down>), moved from there with <C-j>/<C-k>
 local function launch(s)
   s.origin = vim.api.nvim_get_current_win()
   s.buf = vim.api.nvim_create_buf(false, true)
@@ -944,12 +962,18 @@ local function launch(s)
 
   -- gdc on the code window's file: marked at once if in its list, in place, the cursor where it
   -- is (started by the shell, on the file it just opened: on its first change, as gdc's moves
-  -- take it), its row the list's cursor's; else the list's first file, opened. gl on a commit,
-  -- which the shell's gl starts on a file of it, shows the file's change in it so.
+  -- take it), its row the list's cursor's; else the list's first file, opened. gl on a commit
+  -- shows so the change in it of the file it's given (s.path: the shell's gl names the one picked
+  -- there, not opened), else of the code window's file.
   local buf = (s.tool.edit or s.commit) and code_window(s.origin) and vim.api.nvim_win_get_buf(s.origin)
-  local path = buf and in_repo(s, buf)
+  local path = s.path or buf and in_repo(s, buf)
   if path then
     s.view = s.origin -- (the diff's window, see diff_window)
+  end
+  -- (the shell's gl on the diff alone: Neovim's empty buffer, under the diff, out of the buffer
+  -- list, no tab in the bufferline for it; q quits Neovim, see close)
+  if s.from_shell and s.path and buf and vim.api.nvim_buf_get_name(buf) == '' and not vim.bo[buf].modified then
+    vim.bo[buf].buflisted = false
   end
   if s.tool.edit then
     files(s, s.rev, function(l)
@@ -976,11 +1000,12 @@ end
 -- gdc's, gdd's or gda's. These start on the current window's file, if it's in their list: its
 -- change marked, the cursor where it is (with opts.from_shell, Neovim started by the shell's gdc
 -- on the file, see plugins/minimal/gl.lua: on the change, the file just opened); else on the
--- list's first file. gl with opts.commit lists that commit's files, from the current window's
--- file's change in it, the cursor on that, the way gdc starts (the shell's gl starts Neovim so,
--- on the commit and files picked there); with opts.commits too, several commits' files, each
--- commit's under a row of its own, the current file's in opts.commit (the shell's gl, its
--- commits marked with Tab); <BS> goes to the commits.
+-- list's first file. gl with opts.commit lists that commit's files, from the change in it of
+-- opts.path (a file's path from the repository's root), else of the current window's file, the
+-- cursor on that, the way gdc starts: the shell's gl starts Neovim so, on no file, on the commit
+-- and the file picked there (opts.from_shell: closing gl then quits Neovim, see close); with
+-- opts.commits too, several commits' files, each commit's under a row of its own, the file's in
+-- opts.commit (the shell's gl, its commits marked with Tab); <BS> goes to the commits.
 -- Open already, it's turned off: closed as q closes it, but a file it shows stays in the window,
 -- its diff gone
 function M.open(name, opts)
@@ -1013,6 +1038,7 @@ function M.open(name, opts)
   s.from_shell = opts and opts.from_shell
   s.commit = tool == TOOLS.log and opts and opts.commit or nil
   s.commits = s.commit and opts.commits and #opts.commits > 1 and opts.commits or nil
+  s.path = s.commit and opts.path or nil
   if tool.edit then
     -- (the author of a change not committed yet: the one git will commit it under)
     local who = vim.system({ 'git', 'config', 'user.name' }, { cwd = dir, text = true }):wait()
