@@ -350,11 +350,15 @@ local function pump(s)
         end, path, want.follow ~= nil)
         s.last = opened and vim.api.nvim_win_get_buf(w) or s.last -- (the file gdc opened last)
         s.file = file
-        -- (gdc's first file: the cursor goes to it, from where gdc started, if not there already)
-        if s.tool.edit and file and not s.landed then
+        -- (gdc's first file, and gl's on a commit (see launch): the cursor goes to it, from where
+        -- gl started, if not there already, on the change as shown: 'splitkeep' would put it back
+        -- in the view the window had as gl's split resized it)
+        if (s.tool.edit or s.commit) and file and not s.landed then
           s.landed = true
           if vim.api.nvim_get_current_win() == s.origin and w ~= s.origin then
+            local view = vim.api.nvim_win_call(w, vim.fn.winsaveview)
             vim.api.nvim_set_current_win(w)
+            vim.fn.winrestview(view)
           end
         end
         if want.focus then
@@ -854,15 +858,16 @@ end
 
 -- gl in its split, for the session s (its list, its directory and repository root, its files'
 -- cache, the references panel to open again after), the cursor in its list; but gdc's stays on
--- the code, where its files open to edit (the first: see pump), the list below (<C-Down>),
--- moved from there with <C-j>/<C-k>
+-- the code, where its files open to edit (the first: see pump), as gl's on a commit does
+-- (s.commit, the files the shell's gl opens), where the first one's change shows: the list
+-- below (<C-Down>), moved from there with <C-j>/<C-k>
 local function launch(s)
   s.origin = vim.api.nvim_get_current_win()
   s.buf = vim.api.nvim_create_buf(false, true)
   vim.bo[s.buf].bufhidden = 'wipe'
   vim.bo[s.buf].modifiable = false
   pcall(vim.api.nvim_buf_set_name, s.buf, 'gl://' .. s.tool.name)
-  local enter = not s.tool.edit
+  local enter = not (s.tool.edit or s.commit)
   local ok, win = pcall(vim.api.nvim_open_win, s.buf, enter, { split = 'below', win = -1, height = height() })
   if not ok then -- (no room)
     vim.api.nvim_buf_delete(s.buf, { force = true })
@@ -972,10 +977,10 @@ end
 -- change marked, the cursor where it is (with opts.from_shell, Neovim started by the shell's gdc
 -- on the file, see plugins/minimal/gl.lua: on the change, the file just opened); else on the
 -- list's first file. gl with opts.commit lists that commit's files, from the current window's
--- file's change in it, the way gdc starts (the shell's gl starts Neovim so, on the commit and
--- files picked there); with opts.commits too, several commits' files, each commit's under a row
--- of its own, the current file's in opts.commit (the shell's gl, its commits marked with Tab);
--- <BS> goes to the commits.
+-- file's change in it, the cursor on that, the way gdc starts (the shell's gl starts Neovim so,
+-- on the commit and files picked there); with opts.commits too, several commits' files, each
+-- commit's under a row of its own, the current file's in opts.commit (the shell's gl, its
+-- commits marked with Tab); <BS> goes to the commits.
 -- Open already, it's turned off: closed as q closes it, but a file it shows stays in the window,
 -- its diff gone
 function M.open(name, opts)
