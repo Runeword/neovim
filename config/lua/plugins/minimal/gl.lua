@@ -8,7 +8,7 @@ return {
   -- Started by the shell's gdc, gdd or gda (~/terminal's __git_diff runs `GL_OPEN=<kind> nvim --
   -- <files>`: staged, unstaged or changed), Neovim opens in it, on the first of the files picked
   -- there, at its first change; by its gl (__git_log runs `GL_OPEN=log GL_COMMIT=<hash> nvim --
-  -- <files>`), in gl, on the commit's files, the first one's change in it shown; of several
+  -- <files>`), in gl, on the commit's files, at the first one's change in it; of several
   -- commits marked there, all of their files, by commit (GL_COMMITS='<hash> <hash>…', GL_COMMIT
   -- the first file's). The shell only names the list: gl's lists are its own, the shell's
   -- pickers aren't run here.
