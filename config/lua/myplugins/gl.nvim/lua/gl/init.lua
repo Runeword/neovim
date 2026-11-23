@@ -1,6 +1,7 @@
 local vim = vim
 local diff = require('gl.diff')
 local list = require('gl.list')
+local picker = require('gl.pick')
 
 -- gl, a git log in a split along the bottom, and gdc, gdd and gda, the files with a staged
 -- change, an unstaged one, or either, the same way. The lists are gl's own (gl.list): they look
@@ -10,7 +11,9 @@ local list = require('gl.list')
 -- row, the commit's first) as the commit leaves it, or in gdc, gdd and gda the file itself,
 -- opened as a buffer, with its change marked in it (gl.diff). The shell's pickers only start
 -- Neovim in them, on the files picked there (see plugins/minimal/gl.lua). (Below, gdc stands
--- for all three where they work alike.)
+-- for all three where they work alike.) And ga, gru and grd, the files to stage, unstage or
+-- discard a change of, then a file's hunks, marked and applied as the shell's pickers of the same
+-- names do (see the picker's keys, and gl.pick); their files show as gdd's and gdc's do.
 local M = {}
 
 -- gl's lists, by name (the shell's word for each, which plugins/minimal/gl.lua gets from it):
@@ -19,12 +22,16 @@ local M = {}
 -- commits, then a commit's; whether its files open, the work tree's, to edit with the change
 -- marked on them (gl.diff), rather than show as a version of theirs (gl's); and whether its
 -- change starts from the index (gdd's), which a staging changes: its files then listed and
--- marked again (see watch)
+-- marked again (see watch). The pickers' (pick: ga's, gru's, grd's op, see gl.pick) list gdd's
+-- files (grd's without those git doesn't track) or gdc's.
 local TOOLS = {
   log = { name = 'log' },
   staged = { name = 'staged', rev = diff.INDEX, edit = true },
   unstaged = { name = 'unstaged', rev = diff.UNSTAGED, edit = true, index = true },
   changed = { name = 'changed', rev = diff.CHANGED, edit = true },
+  stage = { name = 'stage', rev = diff.UNSTAGED, edit = true, pick = 'stage' },
+  unstage = { name = 'unstage', rev = diff.INDEX, edit = true, pick = 'unstage' },
+  discard = { name = 'discard', rev = diff.UNSTAGED, edit = true, pick = 'discard' },
 }
 
 -- The code window's options a change sets (gl.diff: its winbar), given back with it
@@ -51,9 +58,12 @@ local WIN_OPTS = {
 
 local session -- gl, while it runs
 
--- The split's height: three tenths of the editor's, and the diff the rest
-local function height()
-  return math.max(8, math.floor((vim.o.lines - vim.o.cmdheight) * 0.3))
+-- The split's height: three tenths of the editor's, and the diff the rest; given the rows of a
+-- list shorter than that (a commit's files, as the shell's gl starts on, the files changed),
+-- as many, the diff having the room left (see fit)
+local function height(rows)
+  local most = math.max(8, math.floor((vim.o.lines - vim.o.cmdheight) * 0.3))
+  return rows and math.max(1, math.min(rows, most)) or most
 end
 
 -- The directory gl runs in, whose repository it shows: the current file's, else the working
@@ -324,12 +334,10 @@ local function pick(l, path)
   return path:sub(-1) ~= '/' and { status = 'M', old = path, new = path } or nil
 end
 
-local step -- (below)
-
 -- The diff's buffer (a version's, gl.diff makes one each time; in gdc, the file's own, while
--- it's shown): q closes gl, <CR> opens the file, <C-j>/<C-k> take the list's cursor to its
--- next/previous row, the diff following it while the cursor stays here, for j and k (the
--- char-mode toggle waits meanwhile; visual and operator-pending <C-j>/<C-k> keep their jumps)
+-- it's shown): q closes gl, <CR> opens the file. <C-j>/<C-k> stay this config's (the char-mode
+-- toggle, then j/k's move), moving in the diff as in any file: the list's rows are the list's
+-- (<C-Down>).
 local function keys(s, buf)
   vim.b[buf].gl = true
   vim.keymap.set('n', 'q', function()
@@ -338,12 +346,6 @@ local function keys(s, buf)
   vim.keymap.set('n', '<CR>', function()
     jump(s)
   end, { buffer = buf, desc = 'gl: open the file at this line' })
-  vim.keymap.set('n', '<C-j>', function()
-    step(s, 1)
-  end, { buffer = buf, desc = 'gl: next row' })
-  vim.keymap.set('n', '<C-k>', function()
-    step(s, -1)
-  end, { buffer = buf, desc = 'gl: previous row' })
 end
 
 -- Shows the diff asked for last once git has it, one at a time; asked to (want.focus), the
@@ -368,6 +370,19 @@ local function pump(s)
         end, path, want.follow ~= nil)
         s.last = opened and vim.api.nvim_win_get_buf(w) or s.last -- (the file gdc opened last)
         s.file = file
+        -- (a hunk's row, a picker's: the file at its line, the index's line where the file has it
+        -- for gru, whose hunks are the index's)
+        if want.line and opened then
+          local b = vim.api.nvim_win_get_buf(w)
+          local at = want.line
+          if want.rev == diff.INDEX and new then
+            at = picker.translate(new, vim.api.nvim_buf_get_lines(b, 0, -1, false), at)
+          end
+          vim.api.nvim_win_call(w, function()
+            vim.api.nvim_win_set_cursor(0, { math.max(1, math.min(at, vim.api.nvim_buf_line_count(b))), 0 })
+            vim.cmd('normal! zz')
+          end)
+        end
         -- (gdc's first file, and gl's on a commit (see launch): the cursor goes to it, from where
         -- gl started, if not there already, on the change as shown: 'splitkeep' would put it back
         -- in the view the window had as gl's split resized it)
@@ -408,20 +423,22 @@ local function pump(s)
   end)
 end
 
--- (follow: the buffer of the file, shown already, see follow; focus: see pump)
-local function ask(s, rev, path, follow, focus)
-  s.want = { key = rev .. '\0' .. (path or ''), rev = rev, path = path, follow = follow, focus = focus }
+-- (follow: the buffer of the file, shown already, see follow; focus: see pump; line: a hunk's,
+-- see target)
+local function ask(s, rev, path, follow, focus, line)
+  local key = rev .. '\0' .. (path or '') .. (line and '\0' .. line or '')
+  s.want = { key = key, rev = rev, path = path, follow = follow, focus = focus, line = line }
   pump(s)
 end
 
 -- The revision and path whose change a row shows: a commit's first file's (a commit's row over
 -- its files, too); a file's (a directory's: the first file below it, see pick), in its commit,
--- else in the list's revision
+-- else in the list's revision; a hunk's, its file's, at its line
 local function target(s, r)
   if r.kind == 'commit' or r.kind == 'head' then
     return r.hash, nil
   end
-  return r.rev or s.rev, r.path
+  return r.rev or s.rev, r.path, r.line
 end
 
 -- A row the cursor passes by: a directory's, a commit's over its files
@@ -454,6 +471,25 @@ local function draw(s)
   end
 end
 
+-- The list's window as high as its rows (see height), once they're new: in between, the height
+-- you give it stays. Its view stays too, the cursor on its row ('splitkeep' would scroll the
+-- list as its top edge moves, and the cursor, its row's change shown, with it); but all of them
+-- in view, the first is on top, none left scrolled out above as in a longer list before.
+local function fit(s)
+  if not valid(s.win) then
+    return
+  end
+  local h = height(#s.rows)
+  local view = vim.api.nvim_win_call(s.win, vim.fn.winsaveview)
+  vim.api.nvim_win_resize(s.win, -1, h, { anchor = 'bottom' }) -- (the diff above has the rows)
+  if #s.rows <= h then
+    view.topline = 1
+  end
+  vim.api.nvim_win_call(s.win, function()
+    vim.fn.winrestview(view)
+  end)
+end
+
 -- The list's cursor on row i, which it shows already (or is about to): no change asked for
 local function put(s, i)
   s.row = i
@@ -471,31 +507,31 @@ local function settle(s, i)
   if not r then
     return
   end
-  local rev, path = target(s, r)
+  local rev, path, line = target(s, r)
   local now = vim.uv.now()
   local held = s.moved and now - s.moved < REST
   s.moved = now
   s.rest = s.rest or vim.uv.new_timer()
   s.rest:stop()
   if not held then
-    return ask(s, rev, path)
+    return ask(s, rev, path, nil, nil, line)
   end
   s.rest:start(
     REST,
     0,
     vim.schedule_wrap(function()
       if not s.closed then
-        ask(s, rev, path)
+        ask(s, rev, path, nil, nil, line)
       end
     end)
   )
 end
 
--- From the list or the diff: the list's cursor n rows on (back, n < 0), past a commit's
--- directories (and, of several commits, their rows), its row's change shown; at either end it
--- stops, as the shell's gl does. (Between two rows, its file gone from the list, see restage:
--- the first step is to one of them.)
-step = function(s, n)
+-- In the list: its cursor n rows on (back, n < 0), past a commit's directories (and, of
+-- several commits, their rows), its row's change shown; at either end it stops, as the shell's
+-- gl does. (Between two rows, its file gone from the list, see restage: the first step is to
+-- one of them.)
+local function step(s, n)
   local i, by = s.row or 0, n < 0 and -1 or 1
   local to = by > 0 and math.floor(i) or math.ceil(i)
   for _ = 1, math.abs(n) do
@@ -534,10 +570,11 @@ local function rows(s, new, i, follow)
     end
   end
   draw(s)
+  fit(s)
   if s.rows[i] then
     put(s, i)
-    local rev, path = target(s, s.rows[i])
-    ask(s, rev, path, follow)
+    local rev, path, line = target(s, s.rows[i])
+    ask(s, rev, path, follow, nil, line)
   end
 end
 
@@ -609,10 +646,176 @@ local function groups(s, hashes, start, path)
   end
 end
 
+-- The pickers (ga's, gru's and grd's lists), as the shell's: the files, then, on one, its hunks
+-- in the list instead (<CR>, l), and back to the files (<BS>, h, <Esc>). <Tab> marks a file (all
+-- of its change) or a hunk, <S-Tab> unmarks it, <C-a> marks every row (or, all marked, none); a
+-- file some of whose hunks are marked is marked ◐. <CR> in the hunks, or on a file with none to
+-- show (new, binary, unmerged), applies the op to all that's marked (see accept).
+
+-- The rows of a file's hunks (gl.pick's diff), as the shell lists them: each its number, its
+-- change (+ only adds lines, - only removes them), the file's path and its @@ line; and its line
+-- in the file, where it shows (see target)
+local function hunk_rows(path, d)
+  local new = {}
+  for i, h in ipairs(d.hunks) do
+    new[i] = {
+      kind = 'hunk',
+      number = i,
+      key = 'hunk\0' .. i,
+      path = path,
+      label = path .. ' ' .. h.line,
+      change = h.b == 0 and '+' or h.d == 0 and '-' or '~',
+      line = picker.line(h),
+    }
+  end
+  return new
+end
+
+-- Out of a file's hunks, the files' rows and marks back, the file marked as its hunks are: all of
+-- them, as a whole; some, ◐, those kept (s.specs) with the text git gave them, applied only if
+-- they're still so (see gl.pick.apply); none, not
+local function leave(s)
+  local d = s.drilled
+  s.drilled = nil
+  if vim.api.nvim_buf_is_valid(s.buf) then
+    pcall(vim.keymap.del, 'n', '<Esc>', { buffer = s.buf })
+  end
+  local picked = {}
+  for i = 1, #d.diff.hunks do
+    if s.marked['hunk\0' .. i] then
+      picked[#picked + 1] = i
+    end
+  end
+  s.rows, s.marked, s.specs[d.key] = d.rows, d.marked, nil
+  if #picked == #d.diff.hunks then
+    s.marked[d.key] = true
+  elseif #picked > 0 then
+    s.marked[d.key] = 'part'
+    s.specs[d.key] = { picked = picked, raw = picker.raw(d.diff, picked) }
+  else
+    s.marked[d.key] = nil
+  end
+  return d
+end
+
+-- Back to the files from a file's hunks, the cursor on the file
+local function to_files(s)
+  local d, at = leave(s), nil
+  for i, r in ipairs(s.rows) do
+    if r.key == d.key then
+      at = i
+    end
+  end
+  rows(s, s.rows, at)
+end
+
+-- The op applied to all that's marked: the files marked whole, at once, then the hunks marked of
+-- the others (see gl.pick.apply); gl then closes, as the shell's picker ends, and says what it did
+-- (grd's files open are read again). Nothing marked: gl stays, and says so.
+local function accept(s)
+  if s.drilled then
+    leave(s)
+  end
+  local op, old = picker.OPS[s.tool.pick], {}
+  for _, f in ipairs(s.files[s.rev] or {}) do
+    old[f.new or f.old] = f.old
+  end
+  local whole, parts, nfiles, nhunks = {}, {}, 0, 0
+  for _, r in ipairs(s.rows) do
+    local spec = s.specs[r.key]
+    if r.kind ~= 'file' or not s.marked[r.key] then
+      -- (not picked)
+    elseif spec then
+      parts[#parts + 1] = { path = r.path, picked = spec.picked, raw = spec.raw }
+      nhunks = nhunks + #spec.picked
+    else
+      whole[#whole + 1] = r.path
+      if old[r.path] and old[r.path] ~= r.path then -- (gdc's rename: its old path, too)
+        whole[#whole + 1] = old[r.path]
+      end
+      nfiles = nfiles + 1
+    end
+  end
+  if #whole + #parts == 0 then
+    vim.notify('gl: nothing marked (<Tab> marks a file or a hunk)', vim.log.levels.WARN)
+    return
+  end
+  local err = picker.apply(s.root, s.tool.pick, whole, parts)
+  close(s)
+  if not op.index then
+    vim.cmd.checktime()
+  end
+  if err then
+    vim.notify('gl: ' .. err, vim.log.levels.ERROR)
+    return
+  end
+  local said = {}
+  if nfiles > 0 then
+    said[#said + 1] = nfiles == 1 and '1 file' or nfiles .. ' files'
+  end
+  if nhunks > 0 then
+    said[#said + 1] = nhunks == 1 and '1 hunk' or nhunks .. ' hunks'
+  end
+  vim.notify(('gl: %s %s'):format(op.did, table.concat(said, ' and ')))
+end
+
+-- <CR> (accepting) or l on a file: its hunks, in the list, those marked that were (the file
+-- marked whole: all of them); on a file with none (new, binary, unmerged), <CR> applies the op.
+-- In the hunks, <CR> applies it.
+local function drill(s, accepting)
+  if s.drilled then
+    if accepting then
+      accept(s)
+    end
+    return
+  end
+  local r = s.rows[s.row or 0]
+  if not (r and r.kind == 'file') then
+    return
+  end
+  local d, err = picker.diff(s.root, s.tool.pick, r.path)
+  if not d then
+    vim.notify('gl: ' .. err, vim.log.levels.ERROR)
+    return
+  elseif #d.hunks == 0 then
+    if accepting then
+      accept(s)
+    end
+    return
+  end
+  local spec, marked = s.specs[r.key], {}
+  for i = 1, #d.hunks do
+    local on = spec and vim.tbl_contains(spec.picked, i) or not spec and s.marked[r.key]
+    marked['hunk\0' .. i] = on and true or nil
+  end
+  s.drilled = { key = r.key, diff = d, rows = s.rows, marked = s.marked }
+  s.marked = marked
+  vim.keymap.set('n', '<Esc>', function()
+    to_files(s)
+  end, { buffer = s.buf, nowait = true, desc = 'gl: back to the files' })
+  rows(s, hunk_rows(r.path, d))
+end
+
+-- <C-a> in a picker: every row marked (a file as its hunks were, see leave), or, all marked
+-- already, none
+local function mark_all(s)
+  local all = #s.rows > 0
+  for _, r in ipairs(s.rows) do
+    all = all and s.marked[r.key] ~= nil
+  end
+  for _, r in ipairs(s.rows) do
+    s.marked[r.key] = not all and (s.specs[r.key] and 'part' or true) or nil
+  end
+  draw(s)
+end
+
 -- <CR> in the list: on a commit, its files (the commits marked: all of theirs, see groups); on a
 -- commit's file, those marked (else it) opened, closing gl, as the shell's gl opens them; on
--- gdc's file, to it, in the code window
+-- gdc's file, to it, in the code window; in a picker, see drill
 local function choose(s)
+  if s.tool.pick then
+    return drill(s, true)
+  end
   local r = s.rows[s.row or 0]
   if not r or r.kind == 'head' then
     return
@@ -663,9 +866,14 @@ end
 
 -- <BS> in a commit's files (or several commits'): back to the commits, as they were (the
 -- commits marked still marked); started there by the shell's gl, on the commit of the row under
--- the cursor, the commits it started on marked
+-- the cursor, the commits it started on marked. In a picker's hunks: back to its files.
 local function back(s)
-  if s.tool.edit or not (s.rev or s.groups) then
+  if s.tool.pick then
+    if s.drilled then
+      to_files(s)
+    end
+    return
+  elseif s.tool.edit or not (s.rev or s.groups) then
     return
   end
   local b, r = s.back, s.rows[s.row or 0]
@@ -677,12 +885,14 @@ local function back(s)
   commits(s, r and r.rev or s.rev or s.groups[1], s.groups)
 end
 
--- <Tab>/<S-Tab> on a commit, or a commit's file: it's marked (unmarked, back), then on to the next
--- row (back to the previous one), for <CR> to take them all; elsewhere, only on
+-- <Tab>/<S-Tab> on a commit, or a commit's file (in a picker, a file or a hunk: a file some of
+-- whose hunks were marked, ◐, as they were, see leave): it's marked (unmarked, back), then on to
+-- the next row (back to the previous one), for <CR> to take them all; elsewhere, only on
 local function mark(s, n)
   local r = s.rows[s.row or 0]
-  if s.marked and r and (r.kind == 'commit' or r.kind == 'file') and not s.tool.edit then
-    s.marked[r.key] = n > 0 or nil
+  local kinds = s.tool.pick and { file = true, hunk = true } or not s.tool.edit and { commit = true, file = true } or {}
+  if s.marked and r and kinds[r.kind] then
+    s.marked[r.key] = n > 0 and (s.specs and s.specs[r.key] and 'part' or true) or nil
     draw(s)
   end
   step(s, n)
@@ -707,7 +917,9 @@ end
 -- The list's keys: j/k (and the arrows, <C-j>/<C-k>) a row at a time, past a commit's
 -- directories (j/k would do this config's 4-line jump), its change shown; <CR>, <BS>, <Tab>,
 -- <S-Tab> (see choose, back, mark), q to close; <C-Up> to the diff (<C-w>k would take the window
--- above the cursor's column, which can be the file tree's), the shell's preview keys scroll it
+-- above the cursor's column, which can be the file tree's), the shell's preview keys scroll it.
+-- A picker's, as the file tree's and the shell's picker's: l and <Right> into a file's hunks, h
+-- and <Left> back (and <Esc>, there), <C-a> to mark every row or none.
 local function list_keys(s)
   local function map(lhs, fn, desc)
     vim.keymap.set('n', lhs, fn, { buffer = s.buf, nowait = true, desc = 'gl: ' .. desc })
@@ -722,14 +934,30 @@ local function list_keys(s)
       step(s, -vim.v.count1)
     end, 'previous row')
   end
+  local picking = s.tool.pick ~= nil
   for _, lhs in ipairs({ '<CR>', '<2-LeftMouse>' }) do
     map(lhs, function()
       choose(s)
-    end, "a commit's files, else open the file")
+    end, picking and "the file's hunks, else apply to what's marked" or "a commit's files, else open the file")
   end
   map('<BS>', function()
     back(s)
-  end, 'back to the commits')
+  end, picking and 'back to the files' or 'back to the commits')
+  if picking then
+    for _, lhs in ipairs({ 'l', '<Right>' }) do
+      map(lhs, function()
+        drill(s, false)
+      end, "the file's hunks")
+    end
+    for _, lhs in ipairs({ 'h', '<Left>' }) do
+      map(lhs, function()
+        back(s)
+      end, 'back to the files')
+    end
+    map('<C-a>', function()
+      mark_all(s)
+    end, 'mark every row, or none')
+  end
   map('<Tab>', function()
     mark(s, 1)
   end, 'mark the file, next row')
@@ -829,6 +1057,7 @@ local function restage(s)
     local i = at and row_of(s, at.path)
     s.row = nil
     draw(s)
+    fit(s)
     if i or not was then
       put(s, i or 1)
     else -- (its file gone, all staged: the cursor where it was, between its neighbours for step)
@@ -878,14 +1107,14 @@ end
 -- cache, the references panel to open again after), the cursor in its list; but gdc's stays on
 -- the code, where its files open to edit (the first: see pump), as gl's on a commit does
 -- (s.commit, the shell's gl, on the file picked there), where its change shows: the list below
--- (<C-Down>), moved from there with <C-j>/<C-k>
+-- (<C-Down>)
 local function launch(s)
   s.origin = vim.api.nvim_get_current_win()
   s.buf = vim.api.nvim_create_buf(false, true)
   vim.bo[s.buf].bufhidden = 'wipe'
   vim.bo[s.buf].modifiable = false
   pcall(vim.api.nvim_buf_set_name, s.buf, 'gl://' .. s.tool.name)
-  local enter = not (s.tool.edit or s.commit)
+  local enter = s.tool.pick ~= nil or not (s.tool.edit or s.commit) -- (a picker's: in its list, as fzf)
   local ok, win = pcall(vim.api.nvim_open_win, s.buf, enter, { split = 'below', win = -1, height = height() })
   if not ok then -- (no room)
     vim.api.nvim_buf_delete(s.buf, { force = true })
@@ -934,9 +1163,7 @@ local function launch(s)
   vim.api.nvim_create_autocmd('VimResized', {
     group = group,
     callback = function()
-      if valid(s.win) then
-        vim.api.nvim_win_set_height(s.win, height())
-      end
+      fit(s)
     end,
   })
   -- (its rows as wide as the window: the author and date at its edge)
@@ -980,6 +1207,11 @@ local function launch(s)
       if s.closed then
         return
       end
+      if s.tool.pick and not picker.OPS[s.tool.pick].untracked then -- (grd's: git restores tracked files)
+        l = vim.tbl_filter(function(f)
+          return not f.untracked
+        end, l)
+      end
       s.rows = list.changes(s.root, l, s.author)
       rows(s, s.rows, path and row_of(s, path), not s.from_shell and path and row_of(s, path) and buf or nil)
     end)
@@ -1005,7 +1237,8 @@ end
 -- cursor on that, the way gdc starts: the shell's gl starts Neovim so, on no file, on the commit
 -- and the file picked there (opts.from_shell: closing gl then quits Neovim, see close); with
 -- opts.commits too, several commits' files, each commit's under a row of its own, the file's in
--- opts.commit (the shell's gl, its commits marked with Tab); <BS> goes to the commits.
+-- opts.commit (the shell's gl, its commits marked with Tab); <BS> goes to the commits. stage,
+-- unstage or discard: ga's, gru's or grd's picker, which starts as gdd and gdc do, but in its list.
 -- Open already, it's turned off: closed as q closes it, but a file it shows stays in the window,
 -- its diff gone
 function M.open(name, opts)
@@ -1035,6 +1268,9 @@ function M.open(name, opts)
     { dir = dir, root = vim.trim(top.stdout), files = {}, waiting = {}, versions = {}, tool = tool, rev = tool.rev }
   s.rows = {}
   s.gen = 0 -- (the index's generation, gdd's: see restage)
+  if tool.pick then
+    s.marked, s.specs = {}, {} -- (the rows marked; the files some of whose hunks are: see leave)
+  end
   s.from_shell = opts and opts.from_shell
   s.commit = tool == TOOLS.log and opts and opts.commit or nil
   s.commits = s.commit and opts.commits and #opts.commits > 1 and opts.commits or nil
