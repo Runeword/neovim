@@ -19,9 +19,8 @@ return {
       on_attach = function(buffer)
         local gs = package.loaded.gitsigns
 
-        vim.keymap.set({ 'n', 'x' }, '<leader>ga', gs.stage_buffer, { buffer = buffer, desc = 'git add file' })
-        vim.keymap.set({ 'n', 'x' }, '<leader>gr', gs.reset_buffer_index, { buffer = buffer, desc = 'git reset file' })
-        vim.keymap.set({ 'n', 'x' }, '<leader>gc', gs.reset_buffer, { buffer = buffer, desc = 'git checkout -- file' })
+        -- (staging, unstaging and discarding a file or its hunks: gl.nvim's <leader>ga, <leader>gru
+        -- and <leader>grd, the shell's ga, gru and grd)
         vim.keymap.set(
           { 'n', 'x' },
           '<leader>gb',
