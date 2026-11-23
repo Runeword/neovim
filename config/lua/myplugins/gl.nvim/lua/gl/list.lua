@@ -250,9 +250,11 @@ vim.api.nvim_set_decoration_provider(ns, {
 })
 
 -- Draws the rows in the buffer, as wide as the window (cols): each after a column for its mark
--- (marked: by key, a commit or a commit's file marked with <Tab>), its author and date flush
--- right, one cell short of the edge, its subject cut short at its end, a path at its start (its
--- file's name kept), and with no room left for them, the author and date left out
+-- (marked: by key, a commit or a commit's file marked with <Tab>; in a picker, a file or a hunk,
+-- and ◐ for 'part', a file some of whose hunks are), its author and date flush right, one cell
+-- short of the edge, its subject cut short at its end, a path at its start (its file's name
+-- kept), a hunk's label (its file's path and @@ line) at its end, as the shell's fzf shows it,
+-- and with no room left for them, the author and date left out
 function M.draw(buf, rows, cols, marked)
   local count = 0
   for _, r in ipairs(rows) do
@@ -261,7 +263,8 @@ function M.draw(buf, rows, cols, marked)
   local digits = #tostring(count)
   local lines, hls = {}, {}
   for i, r in ipairs(rows) do
-    local mark = marked and r.key and marked[r.key] and '▌' or ' '
+    local m = marked and r.key and marked[r.key]
+    local mark = m == 'part' and '◐' or m and '▌' or ' '
     local text, hl = mark, {}
     if mark ~= ' ' then
       hl[#hl + 1] = { 0, #mark, 'GlListMark' }
@@ -278,6 +281,7 @@ function M.draw(buf, rows, cols, marked)
         right, room = '', cols - 1 - width(text)
       end
       local main = r.kind == 'commit' and cut(r.hash .. ' ' .. r.subject, room, 'start')
+        or r.label and cut(visible(r.label), room, 'start')
         or cut(visible(r.path), room, 'end')
       text = text .. main
       if right ~= '' then
