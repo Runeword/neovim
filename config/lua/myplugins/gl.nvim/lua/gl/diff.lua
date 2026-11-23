@@ -138,8 +138,8 @@ local WORK = { [M.UNSTAGED] = true, [M.CHANGED] = true }
 -- The files of the work tree with a change, from the index (UNSTAGED) or from HEAD (CHANGED),
 -- read from git status's list (porcelain, -z: XY, then the path, then a rename's or copy's old
 -- path): the unstaged change is Y; the one since HEAD, X then Y; a file it doesn't track (??) is
--- new. git status lists both sides of a file taken out of the index (git rm --cached): gone
--- since HEAD, which comes first, and not tracked.
+-- new (and untracked). git status lists both sides of a file taken out of the index (git rm
+-- --cached): gone since HEAD, which comes first, and not tracked.
 local function changes(out, rev)
   local list, f, i = {}, vim.split(out, '\0', { plain = true }), 1
   while f[i] and f[i] ~= '' do
@@ -147,7 +147,7 @@ local function changes(out, rev)
     local from = (x == 'R' or x == 'C') and f[i + 1] or nil
     i = i + (from and 2 or 1)
     if x == '?' then
-      list[#list + 1] = { status = 'A', new = path }
+      list[#list + 1] = { status = 'A', new = path, untracked = true }
     elseif x == 'U' or y == 'U' or x == y and (x == 'A' or x == 'D') then
       list[#list + 1] = { status = 'U', old = path, new = path }
     elseif rev == M.UNSTAGED then
