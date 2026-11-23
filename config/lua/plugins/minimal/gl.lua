@@ -65,5 +65,27 @@ return {
       end,
       desc = 'git diff HEAD (gda), on/off',
     },
+    -- The shell's ga, gru and grd pickers: the files, then a file's hunks, to mark and apply
+    {
+      '<leader>ga',
+      function()
+        require('gl').open('stage')
+      end,
+      desc = 'git add: files, hunks (ga), on/off',
+    },
+    {
+      '<leader>gru',
+      function()
+        require('gl').open('unstage')
+      end,
+      desc = 'git restore --staged: files, hunks (gru), on/off',
+    },
+    {
+      '<leader>grd',
+      function()
+        require('gl').open('discard')
+      end,
+      desc = 'git restore: files, hunks (grd), on/off',
+    },
   },
 }
